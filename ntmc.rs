@@ -1,13 +1,16 @@
 #![allow(clippy::uninlined_format_args)]
 
 use std::fmt;
+use std::iter::Peekable;
 use std::process::exit;
+use std::str::Chars;
 
 fn main() {
     let args = parse_args();
     let contents = std::fs::read_to_string(&args.input).or_exit(format!("open '{}'", args.input));
+    let tokens = lex(&contents);
 
-    println!("contents='{}'", contents);
+    println!("tokens = {:#?}", tokens);
 }
 
 #[derive(Debug)]
@@ -92,5 +95,75 @@ where
                 exit(1);
             }
         }
+    }
+}
+
+#[derive(Debug)]
+enum Token {
+    Identifier(String),
+    MoveRight,
+    MoveLeft,
+    Accept,
+    Reject,
+    NewLine,
+}
+
+fn lex(source: &str) -> Vec<Token> {
+    let mut tokens = vec![];
+    let mut it = source.chars().peekable();
+
+    while let Some(c) = it.next() {
+        if c == '\n' {
+            tokens.push(Token::NewLine);
+            continue;
+        }
+
+        if c.is_whitespace() {
+            continue;
+        }
+
+        if c.is_alphanumeric() {
+            tokens.push(lex_identifier(c, &mut it));
+            continue;
+        }
+
+        if c == '<' {
+            tokens.push(Token::MoveLeft);
+            continue;
+        }
+
+        if c == '>' || c == '.' {
+            tokens.push(Token::MoveRight);
+            continue;
+        }
+
+        eprintln!("Unexpected character '{}'", c);
+    }
+
+    tokens
+}
+
+fn lex_identifier(mut c: char, it: &mut Peekable<Chars<'_>>) -> Token {
+    let mut id = String::new();
+
+    loop {
+        id.push(c);
+
+        if let Some(p) = it.peek() {
+            if !p.is_alphanumeric() {
+                break;
+            }
+        }
+
+        c = match it.next() {
+            Some(c) => c,
+            None => break,
+        }
+    }
+
+    match id.as_str() {
+        "A" | "Acc" | "Accept" | "H" | "Halt" => Token::Accept,
+        "R" | "Rej" | "Reject" => Token::Reject,
+        _ => Token::Identifier(id),
     }
 }

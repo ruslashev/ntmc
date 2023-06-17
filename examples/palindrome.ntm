@@ -1,0 +1,7 @@
+    x    0    1
+in x.A  x>f0 x>f1
+f0 x<m0 0>f0 1>f0
+f1 x<m1 0>f1 1>f1
+m0 x.A  x<rv x.R
+m1 x.A  x.R  x<rv
+rv x>in 0<rv 1<rv
