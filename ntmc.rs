@@ -3,14 +3,14 @@
 use std::fmt;
 use std::iter::Peekable;
 use std::process::exit;
+use std::slice::Iter;
 use std::str::Chars;
 
 fn main() {
     let args = parse_args();
     let contents = std::fs::read_to_string(&args.input).or_exit(format!("open '{}'", args.input));
     let tokens = lex(&contents);
-
-    println!("tokens = {:#?}", tokens);
+    parse(&tokens);
 }
 
 #[derive(Debug)]
@@ -56,7 +56,7 @@ fn parse_args() -> Args {
 }
 
 fn usage_err(msg: &'static str) -> ! {
-    println!("Error: {}", msg);
+    eprintln!("Error: {}", msg);
     usage(1);
 }
 
@@ -98,7 +98,7 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Token {
     Identifier(String),
     MoveRight,
@@ -165,5 +165,155 @@ fn lex_identifier(mut c: char, it: &mut Peekable<Chars<'_>>) -> Token {
         "A" | "Acc" | "Accept" | "H" | "Halt" => Token::Accept,
         "R" | "Rej" | "Reject" => Token::Reject,
         _ => Token::Identifier(id),
+    }
+}
+
+struct StateActions {
+    state: State,
+    actions: Vec<(Symbol, Action)>,
+}
+
+struct State(String);
+
+struct Symbol(char);
+
+struct Action {
+    symbol: Symbol,
+    movement: Movement,
+    state_tr: StateTransition,
+}
+
+enum Movement {
+    Left,
+    Right,
+}
+
+enum StateTransition {
+    Next(String),
+    Accept,
+    Reject,
+}
+
+fn parse(tokens: &[Token]) {
+    let mut it = tokens.iter().peekable();
+
+    let alphabet = parse_alphabet(&mut it);
+
+    while it.peek().is_some() {
+        let _st_actions = parse_line(&mut it, &alphabet);
+    }
+}
+
+type TokIter<'a> = Peekable<Iter<'a, Token>>;
+
+fn parse_alphabet(it: &mut TokIter) -> Vec<char> {
+    let mut alphabet = vec![];
+
+    loop {
+        match it.peek() {
+            Some(Token::NewLine) => break,
+            None => parsing_err("unexpected end of file"),
+            _ => (),
+        }
+
+        alphabet.push(parse_symbol(it).0);
+    }
+
+    consume_newline(it);
+
+    if alphabet.is_empty() {
+        parsing_err("empty alphabet");
+    }
+
+    alphabet
+}
+
+fn consume_newline(it: &mut TokIter) {
+    match next_token(it) {
+        Token::NewLine => (),
+        t => unexpected_token(t),
+    }
+}
+
+fn parse_symbol(it: &mut TokIter) -> Symbol {
+    match next_token(it) {
+        Token::Identifier(id) => {
+            if id.len() != 1 {
+                parsing_err("alphabet's symbols are 1 character long");
+            }
+            let s = id.chars().next().unwrap();
+            Symbol(s)
+        }
+        t => unexpected_token(t),
+    }
+}
+
+fn next_token<'i>(it: &mut TokIter<'i>) -> &'i Token {
+    match it.next() {
+        Some(t) => t,
+        None => parsing_err("unexpected end of file"),
+    }
+}
+
+fn parsing_err<S>(msg: S) -> !
+where
+    S: AsRef<str> + fmt::Display,
+{
+    eprintln!("Parsing error: {}", msg);
+    exit(1);
+}
+
+fn unexpected_token(t: &Token) -> ! {
+    parsing_err(format!("unexpected token {:?}", t));
+}
+
+fn parse_line(it: &mut TokIter, alphabet: &[char]) -> StateActions {
+    let state = parse_state(it);
+    let mut actions = vec![];
+
+    for s in alphabet {
+        let action = parse_action(it);
+
+        actions.push((Symbol(*s), action));
+    }
+
+    consume_newline(it);
+
+    StateActions { state, actions }
+}
+
+fn parse_state(it: &mut TokIter) -> State {
+    match next_token(it) {
+        Token::Identifier(id) => State(id.clone()),
+        t => unexpected_token(t),
+    }
+}
+
+fn parse_action(it: &mut TokIter) -> Action {
+    let symbol = parse_symbol(it);
+    let movement = parse_movement(it);
+    let state_tr = parse_state_transition(it);
+
+    Action {
+        symbol,
+        movement,
+        state_tr,
+    }
+}
+
+fn parse_movement(it: &mut TokIter) -> Movement {
+    match next_token(it) {
+        Token::MoveRight => Movement::Right,
+        Token::MoveLeft => Movement::Left,
+        t => unexpected_token(t),
+    }
+}
+
+fn parse_state_transition(it: &mut TokIter) -> StateTransition {
+    match next_token(it) {
+        Token::Identifier(id) => StateTransition::Next(id.clone()),
+        Token::Accept => StateTransition::Accept,
+        Token::Reject => StateTransition::Reject,
+        t => unexpected_token(t),
     }
 }
