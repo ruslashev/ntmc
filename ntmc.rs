@@ -1,16 +1,19 @@
 #![allow(clippy::uninlined_format_args)]
 
+use std::fmt;
 use std::process::exit;
 
 fn main() {
     let args = parse_args();
+    let contents = std::fs::read_to_string(&args.input).or_exit(format!("open '{}'", args.input));
 
-    println!("{:?}", args);
+    println!("contents='{}'", contents);
 }
 
 #[derive(Debug)]
 struct Args {
     input: String,
+    #[allow(unused)]
     output: Option<String>,
 }
 
@@ -70,4 +73,24 @@ Options:
 fn version() -> ! {
     println!("ntmc {}", env!("CARGO_PKG_VERSION"));
     exit(0);
+}
+
+trait MaybeError<T, S: AsRef<str>> {
+    fn or_exit(self, message: S) -> T;
+}
+
+impl<T, S, E> MaybeError<T, S> for Result<T, E>
+where
+    S: AsRef<str> + fmt::Display,
+    E: fmt::Display,
+{
+    fn or_exit(self, message: S) -> T {
+        match self {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("Failed to {}: {}", message, e);
+                exit(1);
+            }
+        }
+    }
 }
