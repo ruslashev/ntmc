@@ -10,7 +10,9 @@ fn main() {
     let args = parse_args();
     let contents = std::fs::read_to_string(&args.input).or_exit(format!("open '{}'", args.input));
     let tokens = lex(&contents);
-    let st_actions = parse(&tokens);
+    let table = parse(&tokens);
+
+    println!("{}", table);
 }
 
 #[derive(Debug)]
@@ -185,9 +187,14 @@ fn lex_identifier(mut c: char, it: &mut Peekable<Chars<'_>>) -> Token {
     }
 }
 
+struct Table {
+    alphabet: Vec<char>,
+    st_actions: Vec<StateActions>,
+}
+
 struct StateActions {
     state: State,
-    actions: Vec<(Symbol, Action)>,
+    actions: Vec<Action>,
 }
 
 struct State(String);
@@ -211,7 +218,64 @@ enum StateTransition {
     Reject,
 }
 
-fn parse(tokens: &[Token]) -> Vec<StateActions> {
+impl fmt::Display for Table {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for sym in &self.alphabet {
+            write!(f, "{} ", sym)?;
+        }
+
+        writeln!(f)?;
+
+        for s in &self.st_actions {
+            writeln!(f, "{}", s)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for StateActions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ", self.state.0)?;
+
+        for a in &self.actions {
+            write!(f, "{} ", a)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for Action {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}{}{}", self.symbol.0, self.movement, self.state_tr)
+    }
+}
+
+impl fmt::Display for Movement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Movement::Left => "<",
+            Movement::Right => ">",
+        };
+
+        write!(f, "{}", s)
+    }
+}
+
+impl fmt::Display for StateTransition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            StateTransition::Next(st) => st,
+            StateTransition::Accept => "A",
+            StateTransition::Reject => "R",
+        };
+
+        write!(f, "{}", s)
+    }
+}
+
+fn parse(tokens: &[Token]) -> Table {
     let mut it = tokens.iter().peekable();
     let mut st_actions = vec![];
 
@@ -221,7 +285,10 @@ fn parse(tokens: &[Token]) -> Vec<StateActions> {
         st_actions.push(parse_line(&mut it, &alphabet));
     }
 
-    st_actions
+    Table {
+        alphabet,
+        st_actions,
+    }
 }
 
 type TokIter<'a> = Peekable<Iter<'a, Token>>;
@@ -291,10 +358,8 @@ fn parse_line(it: &mut TokIter, alphabet: &[char]) -> StateActions {
     let state = parse_state(it);
     let mut actions = vec![];
 
-    for s in alphabet {
-        let action = parse_action(it);
-
-        actions.push((Symbol(*s), action));
+    for _ in alphabet {
+        actions.push(parse_action(it));
     }
 
     consume_newline(it);
