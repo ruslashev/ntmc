@@ -10,7 +10,7 @@ fn main() {
     let args = parse_args();
     let contents = std::fs::read_to_string(&args.input).or_exit(format!("open '{}'", args.input));
     let tokens = lex(&contents);
-    parse(&tokens);
+    let st_actions = parse(&tokens);
 }
 
 #[derive(Debug)]
@@ -18,6 +18,8 @@ struct Args {
     input: String,
     #[allow(unused)]
     output: Option<String>,
+    argument: Option<String>,
+    interactive: bool,
 }
 
 fn parse_args() -> Args {
@@ -28,8 +30,10 @@ fn parse_args() -> Args {
     };
 
     let mut it = tail;
-    let mut input = None;
     let mut output = None;
+    let mut input = None;
+    let mut argument = None;
+    let mut interactive = false;
 
     loop {
         match it {
@@ -37,6 +41,14 @@ fn parse_args() -> Args {
             ["-v" | "--version", ..] => version(),
             ["-o" | "--output", filename, rest @ ..] => {
                 output = Some((*filename).to_string());
+                it = rest;
+            }
+            ["-a" | "--argument", tape_input, rest @ ..] => {
+                argument = Some((*tape_input).to_string());
+                it = rest;
+            }
+            ["-i" | "--interactive", rest @ ..] => {
+                interactive = true;
                 it = rest;
             }
             [filename, rest @ ..] => {
@@ -52,7 +64,12 @@ fn parse_args() -> Args {
 
     let input = input.unwrap_or_else(|| usage_err("no input filename given"));
 
-    Args { input, output }
+    Args {
+        input,
+        output,
+        argument,
+        interactive,
+    }
 }
 
 fn usage_err(msg: &'static str) -> ! {
@@ -194,14 +211,17 @@ enum StateTransition {
     Reject,
 }
 
-fn parse(tokens: &[Token]) {
+fn parse(tokens: &[Token]) -> Vec<StateActions> {
     let mut it = tokens.iter().peekable();
+    let mut st_actions = vec![];
 
     let alphabet = parse_alphabet(&mut it);
 
     while it.peek().is_some() {
-        let _st_actions = parse_line(&mut it, &alphabet);
+        st_actions.push(parse_line(&mut it, &alphabet));
     }
+
+    st_actions
 }
 
 type TokIter<'a> = Peekable<Iter<'a, Token>>;
