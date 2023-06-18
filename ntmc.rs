@@ -1,6 +1,8 @@
 #![allow(clippy::uninlined_format_args)]
 
+use std::collections::HashMap;
 use std::fmt;
+use std::iter;
 use std::iter::Peekable;
 use std::process::exit;
 use std::slice::Iter;
@@ -12,7 +14,9 @@ fn main() {
     let tokens = lex(&contents);
     let table = parse(&tokens);
 
-    println!("{}", table);
+    if args.interactive {
+        interactive_exec(&table, args.argument);
+    }
 }
 
 #[derive(Debug)]
@@ -197,21 +201,26 @@ struct StateActions {
     actions: Vec<Action>,
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct State(String);
 
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
 struct Symbol(char);
 
+#[derive(Clone)]
 struct Action {
     symbol: Symbol,
     movement: Movement,
     state_tr: StateTransition,
 }
 
+#[derive(Clone, Copy)]
 enum Movement {
     Left,
     Right,
 }
 
+#[derive(Clone)]
 enum StateTransition {
     Next(String),
     Accept,
@@ -401,4 +410,170 @@ fn parse_state_transition(it: &mut TokIter) -> StateTransition {
         Token::Reject => StateTransition::Reject,
         t => unexpected_token(t),
     }
+}
+
+struct JumpTable {
+    mappings: HashMap<(Symbol, State), Action>,
+}
+
+struct Tape {
+    positive: Vec<Symbol>,
+    negative: Vec<Symbol>,
+    head: isize,
+    blank: Symbol,
+}
+
+impl JumpTable {
+    fn from_table(table: &Table) -> Self {
+        let mut mappings = HashMap::new();
+
+        for s in &table.st_actions {
+            let state = &s.state;
+
+            for (i, action) in s.actions.iter().enumerate() {
+                let symbol = Symbol(table.alphabet[i]);
+
+                mappings.insert((symbol, state.clone()), action.clone());
+            }
+        }
+
+        JumpTable { mappings }
+    }
+
+    fn lookup(&self, sym: Symbol, state: State) -> &Action {
+        self.mappings.get(&(sym, state)).unwrap()
+    }
+}
+
+impl Tape {
+    fn from_string(blank: Symbol, arg: String) -> Self {
+        let positive = arg
+            .into_bytes()
+            .iter()
+            .map(|b| Symbol(*b as char))
+            .collect();
+
+        Tape {
+            positive,
+            negative: Vec::new(),
+            head: 0,
+            blank,
+        }
+    }
+
+    fn empty(blank: Symbol) -> Self {
+        Tape {
+            positive: Vec::new(),
+            negative: Vec::new(),
+            head: 0,
+            blank,
+        }
+    }
+
+    #[allow(clippy::cast_sign_loss)]
+    fn get_symbol(&mut self) -> Symbol {
+        let h = self.head;
+
+        if h >= 0 {
+            let h = h as usize;
+
+            if h >= self.positive.len() {
+                self.extend_tape_positive(h);
+            }
+
+            self.positive[h]
+        } else {
+            let h = (-h - 1) as usize;
+
+            if h >= self.negative.len() {
+                self.extend_tape_negative(h);
+            }
+
+            self.negative[h]
+        }
+    }
+
+    fn extend_tape_positive(&mut self, h: usize) {
+        let num_items = h + 1 - self.positive.len();
+        let items = iter::repeat(self.blank)
+            .take(num_items)
+            .collect::<Vec<Symbol>>();
+
+        self.positive.extend_from_slice(&items);
+    }
+
+    fn extend_tape_negative(&mut self, h: usize) {
+        let num_items = h + 1 - self.negative.len();
+        let items = iter::repeat(self.blank)
+            .take(num_items)
+            .collect::<Vec<Symbol>>();
+
+        self.negative.extend_from_slice(&items);
+    }
+
+    #[allow(clippy::cast_sign_loss)]
+    fn write(&mut self, symbol: Symbol) {
+        if self.head >= 0 {
+            self.positive[self.head as usize] = symbol;
+        } else {
+            let h = -self.head - 1;
+            self.negative[h as usize] = symbol;
+        }
+    }
+
+    fn shift(&mut self, movement: Movement) {
+        match movement {
+            Movement::Left => self.head -= 1,
+            Movement::Right => self.head += 1,
+        }
+    }
+}
+
+impl fmt::Display for Tape {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for s in self.negative.iter().rev() {
+            write!(f, "{}", s.0)?;
+        }
+
+        for s in &self.positive {
+            write!(f, "{}", s.0)?;
+        }
+
+        Ok(())
+    }
+}
+
+fn interactive_exec(table: &Table, argument: Option<String>) {
+    let jt = JumpTable::from_table(table);
+    let blank = Symbol(table.alphabet[0]);
+
+    let mut tape = if let Some(initial_tape) = argument {
+        Tape::from_string(blank, initial_tape)
+    } else {
+        Tape::empty(blank)
+    };
+
+    let mut state = table.st_actions[0].state.clone();
+
+    loop {
+        let symbol = tape.get_symbol();
+        let action = jt.lookup(symbol, state);
+
+        tape.write(action.symbol);
+        tape.shift(action.movement);
+
+        match &action.state_tr {
+            StateTransition::Next(next_st) => state = State(next_st.clone()),
+            StateTransition::Accept => {
+                println!("Accept");
+                break;
+            }
+            StateTransition::Reject => {
+                println!("Reject");
+                break;
+            }
+        }
+    }
+
+    println!("Tape: {}", tape);
 }
