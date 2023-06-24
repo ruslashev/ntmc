@@ -146,6 +146,16 @@ fn lex(source: &str) -> Vec<Token> {
             continue;
         }
 
+        if c == '#' {
+            for c in it.by_ref() {
+                if c == '\n' {
+                    break;
+                }
+            }
+            tokens.push(Token::NewLine);
+            continue;
+        }
+
         if c.is_alphanumeric() {
             tokens.push(lex_identifier(c, &mut it));
             continue;
@@ -289,6 +299,8 @@ fn parse(tokens: &[Token]) -> Table {
     let mut it = tokens.iter().peekable();
     let mut st_actions = vec![];
 
+    skip_newlines(&mut it);
+
     let alphabet = parse_alphabet(&mut it);
 
     while it.peek().is_some() {
@@ -302,6 +314,12 @@ fn parse(tokens: &[Token]) -> Table {
 }
 
 type TokIter<'a> = Peekable<Iter<'a, Token>>;
+
+fn skip_newlines(it: &mut TokIter) {
+    while let Some(Token::NewLine) = it.peek() {
+        it.next();
+    }
+}
 
 fn parse_alphabet(it: &mut TokIter) -> Vec<char> {
     let mut alphabet = vec![];
