@@ -15,7 +15,8 @@ fn main() {
     let table = parse(&tokens);
 
     if args.interactive {
-        interactive_exec(&table, args.argument);
+        let accept = interactive_exec(&table, args.argument);
+        exit(i32::from(!accept));
     }
 }
 
@@ -543,7 +544,7 @@ impl fmt::Display for Tape {
     }
 }
 
-fn interactive_exec(table: &Table, argument: Option<String>) {
+fn interactive_exec(table: &Table, argument: Option<String>) -> bool {
     let jt = JumpTable::from_table(table);
     let blank = Symbol(table.alphabet[0]);
 
@@ -555,7 +556,7 @@ fn interactive_exec(table: &Table, argument: Option<String>) {
 
     let mut state = table.st_actions[0].state.clone();
 
-    loop {
+    let accept = loop {
         let symbol = tape.get_symbol();
         let action = jt.lookup(symbol, state);
 
@@ -566,14 +567,16 @@ fn interactive_exec(table: &Table, argument: Option<String>) {
             StateTransition::Next(next_st) => state = State(next_st.clone()),
             StateTransition::Accept => {
                 println!("Accept");
-                break;
+                break true;
             }
             StateTransition::Reject => {
                 println!("Reject");
-                break;
+                break false;
             }
         }
-    }
+    };
 
     println!("Tape: {}", tape);
+
+    accept
 }
