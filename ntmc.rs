@@ -161,17 +161,14 @@ fn lex(source: &str) -> Vec<Token> {
             continue;
         }
 
-        if c == '<' {
-            tokens.push(Token::MoveLeft);
-            continue;
-        }
+        let token = match c {
+            '<' => Token::MoveLeft,
+            '>' => Token::MoveRight,
+            '_' => Token::Identifier(' '.to_string()),
+            c => Token::Identifier(c.to_string()),
+        };
 
-        if c == '>' || c == '.' {
-            tokens.push(Token::MoveRight);
-            continue;
-        }
-
-        eprintln!("Unexpected character '{}'", c);
+        tokens.push(token);
     }
 
     tokens
