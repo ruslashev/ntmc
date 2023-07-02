@@ -15,7 +15,7 @@ fn main() {
     let table = parse(&tokens);
 
     if args.interactive {
-        let accept = interactive_exec(&table, args.argument);
+        let accept = interactive_exec(&table, args.argument, args.trace);
         exit(i32::from(!accept));
     }
 }
@@ -27,6 +27,7 @@ struct Args {
     output: Option<String>,
     argument: Option<String>,
     interactive: bool,
+    trace: bool,
 }
 
 fn parse_args() -> Args {
@@ -41,6 +42,7 @@ fn parse_args() -> Args {
     let mut input = None;
     let mut argument = None;
     let mut interactive = false;
+    let mut trace = false;
 
     loop {
         match it {
@@ -56,6 +58,10 @@ fn parse_args() -> Args {
             }
             ["-i" | "--interactive", rest @ ..] => {
                 interactive = true;
+                it = rest;
+            }
+            ["-t" | "--trace", rest @ ..] => {
+                trace = true;
                 it = rest;
             }
             [filename, rest @ ..] => {
@@ -76,6 +82,7 @@ fn parse_args() -> Args {
         output,
         argument,
         interactive,
+        trace,
     }
 }
 
@@ -89,6 +96,9 @@ fn usage(ret: i8) -> ! {
 Usage: ntmc [options] <file>
 Options:
     -o, --output <file>   Store output in <file>
+    -a, --argument <str>  Initial value of tape
+    -i, --interactive     Interactive/interpreter mode
+    -t, --trace           Trace execution
     -h, --help            Display help
     -v, --version         Display version";
 
@@ -456,8 +466,14 @@ impl JumpTable {
         JumpTable { mappings }
     }
 
-    fn lookup(&self, sym: Symbol, state: State) -> &Action {
-        self.mappings.get(&(sym, state)).unwrap()
+    fn lookup(&self, sym: Symbol, state: &State) -> &Action {
+        self.mappings.get(&(sym, state.clone())).unwrap_or_else(|| {
+            eprintln!(
+                "Error: no actions matched symbol '{}' at state '{}'",
+                sym.0, state.0
+            );
+            exit(1)
+        })
     }
 }
 
@@ -547,19 +563,33 @@ impl Tape {
 
 impl fmt::Display for Tape {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut chars = vec![];
+
         for s in self.negative.iter().rev() {
-            write!(f, "{}", s.0)?;
+            chars.push(s.0);
         }
 
         for s in &self.positive {
-            write!(f, "{}", s.0)?;
+            chars.push(s.0);
+        }
+
+        let tape_idx = (self.negative.len() as isize + self.head) as usize;
+
+        for (i, c) in chars.iter().enumerate() {
+            if i == tape_idx {
+                let inverse = "\x1b[7m";
+                let normal = "\x1b[m";
+                write!(f, "{}{}{}", inverse, c, normal)?;
+            } else {
+                write!(f, "{}", c)?;
+            }
         }
 
         Ok(())
     }
 }
 
-fn interactive_exec(table: &Table, argument: Option<String>) -> bool {
+fn interactive_exec(table: &Table, argument: Option<String>, trace: bool) -> bool {
     let jt = JumpTable::from_table(table);
     let blank = Symbol(table.alphabet[0]);
 
@@ -572,8 +602,12 @@ fn interactive_exec(table: &Table, argument: Option<String>) -> bool {
     let mut state = table.st_actions[0].state.clone();
 
     let accept = loop {
+        if trace {
+            println!("tape={}, state={}", tape, state.0);
+        }
+
         let symbol = tape.get_symbol();
-        let action = jt.lookup(symbol, state);
+        let action = jt.lookup(symbol, &state);
 
         tape.write(action.symbol);
         tape.shift(action.movement);
