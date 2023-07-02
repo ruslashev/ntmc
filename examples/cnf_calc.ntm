@@ -2,25 +2,19 @@
 # Example: . (~0 | 1) & (0 | 1 | ~0 | 0) & (~1 | 1) .
 
     _    (    )    0    1    ~    |    &    .
-in _>in (>ds _>R  _>R  _>R  _>R  _>R  _>R  .>in
+in _>in _>ds _>R  _>R  _>R  _>R  _>R  _>R  .>in
 ds _>ds _>R  _>R  _>d0 _>d1 _>di _>R  _>R  _>R
 di _>di _>R  _>R  _>d1 _>d0 _>R  _>R  _>R  _>R
-d0 _>d0 _>R  _<p0 _>R  _>R  _>R  _>m0 _>R  _>R
-d1 _>d1 _>R  _<p1 _>R  _>R  _>R  _>m1 _>R  _>R
-m0 _>m0 _>R  _>R  0<ds 1<ds _>i0 _>R  _>R  _>R
-m1 _>m1 _>R  _>R  1<ds 1<ds _>i1 _>R  _>R  _>R
-i0 _>i0 _>R  _>R  1<ds 0<ds _>R  _>R  _>R  _>R
-i1 _>i0 _>R  _>R  1<ds 1<ds _>R  _>R  _>R  _>R
-p0 _<p0 0>c0 _>R  _>R  _>R  _>R  _>R  _>R  _>R
-p1 _<p1 1>c1 _>R  _>R  _>R  _>R  _>R  _>R  _>R
-c0 _>c0 _>R  _>R  _>R  _>R  _>R  _>R  &>a0 .<cb
-c1 _>c1 _>R  _>R  _>R  _>R  _>R  _>R  &>a1 .<cb
-a0 _>a0 (>ds _>R  0<e2 0<e2 _>R  _>R  _>R  _>R
-a1 _>a1 (>ds _>R  0<e2 1<e2 _>R  _>R  _>R  _>R
-e2 _<e2 _>R  _>R  _>R  _>R  _>R  _>R  _<e1 _>R
-e1 _<e1 _>R  _>R  _>in _>in _>R  _>R  _>R  _>R
-cb _<cb _>R  _>R  _<f0 _<f1 _>R  _>R  _>R  _>R
-f0 _<f0 _>R  _>R  _>R  _>R  _>R  _>R  _<b0 _>R
-f1 _<f1 _>R  _>R  _>R  _>R  _>R  _>R  _<b1 _>A
-b0 _<b0 _>R  _>R  0>c0 0>c0 _>R  _>R  _>R  _>R
-b1 _<b1 _>R  _>R  0>c0 1>c1 _>R  _>R  _>R  _>R
+d0 _>d0 _>R  0>n2 _>R  _>R  _>R  _>m0 _>R  _>R
+d1 _>d1 _>R  1>n2 _>R  _>R  _>R  _>m1 _>R  _>R
+m0 _>m0 _>R  _>R  _>d0 _>d1 _>i0 _>R  _>R  _>R
+m1 _>m1 _>R  _>R  _>d1 _>d1 _>i1 _>R  _>R  _>R
+i0 _>i0 _>R  _>R  _>d1 _>d0 _>R  _>R  _>R  _>R
+i1 _>i0 _>R  _>R  _>d1 _>d1 _>R  _>R  _>R  _>R
+n2 _>n2 _>R  _>R  _>R  _>R  _>R  _>R  &>n1 _<bt
+n1 _>n1 _>ds _>R  _>R  _>R  _>R  _>R  _>R  _>R
+bt _<bt _>R  _>R  _<b0 _<b1 _>R  _>R  _>R  _>R
+b0 _<b0 _>R  _>R  _>R  _>R  _>R  _>R  _<c0 0>R
+b1 _<b1 _>R  _>R  _>R  _>R  _>R  _>R  _<c1 1>A
+c0 _<c0 _>R  _>R  _<b0 _<b0 _>R  _>R  _>R  _>R
+c1 _<c1 _>R  _>R  _<b0 _<b1 _>R  _>R  _>R  _>R
