@@ -112,6 +112,15 @@ fn version() -> ! {
     exit(0);
 }
 
+macro_rules! die {
+    ($( $arg:tt )*) => {
+        {
+            eprintln!($($arg)*);
+            exit(1);
+        }
+    }
+}
+
 trait MaybeError<T, S: AsRef<str>> {
     fn or_exit(self, message: S) -> T;
 }
@@ -124,10 +133,7 @@ where
     fn or_exit(self, message: S) -> T {
         match self {
             Ok(t) => t,
-            Err(e) => {
-                eprintln!("Failed to {}: {}", message, e);
-                exit(1);
-            }
+            Err(e) => die!("Failed to {}: {}", message, e),
         }
     }
 }
@@ -311,6 +317,10 @@ fn parse(tokens: &[Token]) -> Table {
     let alphabet = parse_alphabet(&mut it);
 
     while it.peek().is_some() {
+        if let Some(Token::NewLine) = it.peek() {
+            it.next();
+            continue;
+        }
         st_actions.push(parse_line(&mut it, &alphabet));
     }
 
@@ -381,8 +391,7 @@ fn parsing_err<S>(msg: S) -> !
 where
     S: AsRef<str> + fmt::Display,
 {
-    eprintln!("Parsing error: {}", msg);
-    exit(1);
+    die!("Parsing error: {}", msg);
 }
 
 fn unexpected_token(t: &Token) -> ! {
@@ -468,11 +477,11 @@ impl JumpTable {
 
     fn lookup(&self, sym: Symbol, state: &State) -> &Action {
         self.mappings.get(&(sym, state.clone())).unwrap_or_else(|| {
-            eprintln!(
+            die!(
                 "Error: no actions matched symbol '{}' at state '{}'",
-                sym.0, state.0
+                sym.0,
+                state.0
             );
-            exit(1)
         })
     }
 }
@@ -573,9 +582,15 @@ impl fmt::Display for Tape {
             chars.push(s.0);
         }
 
-        let tape_idx = (self.negative.len() as isize + self.head) as usize;
+        assert!(self.negative.len() < isize::MAX as usize);
+        #[allow(clippy::cast_possible_wrap)]
+        let tape_idx = self.negative.len() as isize + self.head;
 
         for (i, c) in chars.iter().enumerate() {
+            assert!(i < isize::MAX as usize);
+            #[allow(clippy::cast_possible_wrap)]
+            let i = i as isize;
+
             if i == tape_idx {
                 let inverse = "\x1b[7m";
                 let normal = "\x1b[m";
