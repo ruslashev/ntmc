@@ -755,15 +755,40 @@ fn libc_assert(condition: bool, msg: &str) {
     die!("{}: errno = {}", msg, errno);
 }
 
+#[rustfmt::skip]
+macro_rules! func {
+    ($name:ident, $insn:literal) => {
+        core::arch::global_asm!(concat!(
+            stringify!($name), "_addr:\n",
+            $insn,
+            // Insanely unsafe, relies on rustc's internal representation of slices
+            stringify!($name), ":\n",
+            ".8byte ", stringify!($name), "_addr\n",
+            ".8byte . - ", stringify!($name), "_addr - 8\n",
+        ));
+
+        extern "C" {
+            #[allow(improper_ctypes)]
+            static $name: &'static [u8];
+        }
+    };
+}
+
+func!(
+    lole,
+    r#"
+    mov rax, 1
+    add rax, 2
+    ret
+"#
+);
+
 fn jit_compile(_table: &Table, _argument: Option<String>, _trace: bool) -> bool {
     let mut b = MappedBuffer::new(1);
-    let program = vec![
-        0x48, 0xb8, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov rax, 1
-        0x48, 0x05, 0x02, 0x00, 0x00, 0x00, // add rax, 2
-        0xc3, // ret
-    ];
 
-    b.write(&program);
+    unsafe {
+        b.write(lole);
+    }
 
     let e = b.into_executable();
 
