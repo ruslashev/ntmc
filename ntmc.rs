@@ -1,6 +1,7 @@
 #![allow(clippy::uninlined_format_args)]
 
 use std::collections::HashMap;
+use std::ffi::{c_int, c_void};
 use std::fmt;
 use std::iter;
 use std::iter::Peekable;
@@ -14,10 +15,13 @@ fn main() {
     let tokens = lex(&contents);
     let table = parse(&tokens);
 
-    if args.interactive {
-        let accept = interactive_exec(&table, args.argument, args.trace);
-        exit(i32::from(!accept));
-    }
+    let accept = if args.interactive {
+        interactive_exec(&table, args.argument, args.trace)
+    } else {
+        jit_compile(&table, args.argument, args.trace)
+    };
+
+    exit(i32::from(!accept));
 }
 
 #[derive(Debug)]
@@ -643,4 +647,128 @@ fn interactive_exec(table: &Table, argument: Option<String>, trace: bool) -> boo
     println!("Tape: {}", tape);
 
     accept
+}
+
+extern "C" {
+    fn mmap(
+        addr: *mut c_void,
+        length: usize,
+        prot: c_int,
+        flags: c_int,
+        fd: c_int,
+        offset: i64,
+    ) -> *mut c_void;
+    fn munmap(addr: *mut c_void, length: usize) -> c_int;
+    fn mprotect(addr: *mut c_void, len: usize, prot: c_int) -> c_int;
+    fn __errno_location() -> *mut c_int;
+}
+
+const PROT_READ: c_int = 1;
+const PROT_WRITE: c_int = 2;
+const PROT_EXEC: c_int = 4;
+
+const MAP_PRIVATE: c_int = 0x2;
+const MAP_ANONYMOUS: c_int = 0x20;
+const MAP_FAILED: *mut c_void = !0 as *mut c_void;
+
+struct MappedBuffer {
+    addr: *mut c_void,
+    size: usize,
+    write_idx: usize,
+}
+
+impl MappedBuffer {
+    fn new(pages: usize) -> Self {
+        let size = pages * 4096;
+        let addr = unsafe {
+            mmap(
+                std::ptr::null_mut(),
+                size,
+                PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        };
+
+        libc_assert(addr != MAP_FAILED, "Mapping failed");
+
+        MappedBuffer {
+            addr,
+            size,
+            write_idx: 0,
+        }
+    }
+
+    fn write(&mut self, data: &[u8]) {
+        let write = self.write_idx..self.write_idx + data.len();
+
+        if write.end > self.size {
+            die!("Mapped buffer overflow");
+        }
+
+        let slice = unsafe { self.as_slice_mut() };
+
+        slice[write].copy_from_slice(data);
+    }
+
+    unsafe fn as_slice_mut(&mut self) -> &mut [u8] {
+        std::slice::from_raw_parts_mut(self.addr.cast(), self.size)
+    }
+
+    fn into_executable(self) -> ExecBuffer {
+        let ret = unsafe { mprotect(self.addr, self.size, PROT_READ | PROT_EXEC) };
+
+        libc_assert(ret == 0, "Failed to make buffer executable");
+
+        ExecBuffer { buf: self }
+    }
+}
+
+impl Drop for MappedBuffer {
+    fn drop(&mut self) {
+        let ret = unsafe { munmap(self.addr, self.size) };
+
+        libc_assert(ret == 0, "Failed to unmap");
+    }
+}
+
+struct ExecBuffer {
+    buf: MappedBuffer,
+}
+
+impl ExecBuffer {
+    fn execute(self) -> u64 {
+        let code: fn() -> u64 = unsafe { std::mem::transmute(self.buf.addr) };
+
+        code()
+    }
+}
+
+fn libc_assert(condition: bool, msg: &str) {
+    if condition {
+        return;
+    }
+
+    let errno = unsafe { __errno_location().read() };
+
+    die!("{}: errno = {}", msg, errno);
+}
+
+fn jit_compile(_table: &Table, _argument: Option<String>, _trace: bool) -> bool {
+    let mut b = MappedBuffer::new(1);
+    let program = vec![
+        0x48, 0xb8, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov rax, 1
+        0x48, 0x05, 0x02, 0x00, 0x00, 0x00, // add rax, 2
+        0xc3, // ret
+    ];
+
+    b.write(&program);
+
+    let e = b.into_executable();
+
+    let ret = e.execute();
+    println!("ret={}", ret);
+
+    true
 }
