@@ -3,7 +3,7 @@ name = "ntmc"
 version = "0.0.0"
 edition = "2021"
 authors = ["Ruslan Akbashev <ruslashev@gmail.com>"]
-license = "Unlicense"
+license = "Zlib"
 
 [[bin]]
 name = "ntmc"
