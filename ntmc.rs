@@ -6,7 +6,7 @@ use std::ffi::{c_int, c_void};
 use std::iter::Peekable;
 use std::process::exit;
 use std::str::Chars;
-use std::{fmt, iter, slice};
+use std::{fmt, iter, ptr, slice};
 
 fn main() {
     let args = parse_args();
@@ -490,6 +490,15 @@ impl JumpTable {
 }
 
 impl Tape {
+    fn new(blank: Symbol) -> Self {
+        Tape {
+            positive: Vec::new(),
+            negative: Vec::new(),
+            head: 0,
+            blank,
+        }
+    }
+
     fn from_string(blank: Symbol, arg: String) -> Self {
         let positive = arg
             .into_bytes()
@@ -505,12 +514,11 @@ impl Tape {
         }
     }
 
-    fn empty(blank: Symbol) -> Self {
-        Tape {
-            positive: Vec::new(),
-            negative: Vec::new(),
-            head: 0,
-            blank,
+    fn from_argument(argument: Option<String>, blank: Symbol) -> Self {
+        if let Some(initial_tape) = argument {
+            Self::from_string(blank, initial_tape)
+        } else {
+            Self::new(blank)
         }
     }
 
@@ -611,12 +619,7 @@ fn interactive_exec(table: &Table, argument: Option<String>, trace: bool) -> boo
     let jt = JumpTable::from_table(table);
     let blank = Symbol(table.alphabet[0]);
 
-    let mut tape = if let Some(initial_tape) = argument {
-        Tape::from_string(blank, initial_tape)
-    } else {
-        Tape::empty(blank)
-    };
-
+    let mut tape = Tape::from_argument(argument, blank);
     let mut state = table.st_actions[0].state.clone();
 
     let accept = loop {
@@ -681,7 +684,7 @@ impl MappedBuffer {
         let size = pages * 4096;
         let addr = unsafe {
             mmap(
-                std::ptr::null_mut(),
+                ptr::null_mut(),
                 size,
                 PROT_READ | PROT_WRITE,
                 MAP_PRIVATE | MAP_ANONYMOUS,
@@ -776,8 +779,11 @@ macro_rules! func {
     };
 }
 
-fn jit_compile(_table: &Table, _argument: Option<String>, _trace: bool) -> bool {
+fn jit_compile(table: &Table, argument: Option<String>, _trace: bool) -> bool {
     let mut b = MappedBuffer::new(1);
+
+    let blank = Symbol(table.alphabet[0]);
+    let tape = Tape::from_argument(argument, blank);
 
     let lole = func!(
         r#"
@@ -793,6 +799,8 @@ fn jit_compile(_table: &Table, _argument: Option<String>, _trace: bool) -> bool 
 
     let ret = e.execute();
     println!("ret={}", ret);
+
+    println!("Tape: {}", tape);
 
     true
 }
