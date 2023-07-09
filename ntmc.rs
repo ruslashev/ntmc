@@ -1,13 +1,12 @@
 #![allow(clippy::uninlined_format_args)]
 
+use std::arch::asm;
 use std::collections::HashMap;
 use std::ffi::{c_int, c_void};
-use std::fmt;
-use std::iter;
 use std::iter::Peekable;
 use std::process::exit;
-use std::slice::Iter;
 use std::str::Chars;
+use std::{fmt, iter, slice};
 
 fn main() {
     let args = parse_args();
@@ -334,7 +333,7 @@ fn parse(tokens: &[Token]) -> Table {
     }
 }
 
-type TokIter<'a> = Peekable<Iter<'a, Token>>;
+type TokIter<'a> = Peekable<slice::Iter<'a, Token>>;
 
 fn skip_newlines(it: &mut TokIter) {
     while let Some(Token::NewLine) = it.peek() {
@@ -757,38 +756,38 @@ fn libc_assert(condition: bool, msg: &str) {
 
 #[rustfmt::skip]
 macro_rules! func {
-    ($name:ident, $insn:literal) => {
-        core::arch::global_asm!(concat!(
-            stringify!($name), "_addr:\n",
-            $insn,
-            // Insanely unsafe, relies on rustc's internal representation of slices
-            stringify!($name), ":\n",
-            ".8byte ", stringify!($name), "_addr\n",
-            ".8byte . - ", stringify!($name), "_addr - 8\n",
-        ));
+    ($insn:literal) => {
+        unsafe {
+            let start: u64;
+            let end: u64;
 
-        extern "C" {
-            #[allow(improper_ctypes)]
-            static $name: &'static [u8];
+            asm!(
+                "lea {}, [rip + 2]",
+                "jmp 2f",
+                $insn,
+                "2:",
+                "lea {}, [rip - 7]",
+                out(reg) start,
+                out(reg) end,
+            );
+
+            slice::from_raw_parts_mut(start as *mut u8, (end - start) as usize)
         }
     };
 }
 
-func!(
-    lole,
-    r#"
-    mov rax, 1
-    add rax, 2
-    ret
-"#
-);
-
 fn jit_compile(_table: &Table, _argument: Option<String>, _trace: bool) -> bool {
     let mut b = MappedBuffer::new(1);
 
-    unsafe {
-        b.write(lole);
-    }
+    let lole = func!(
+        r#"
+        mov rax, 1
+        add rax, 2
+        ret
+        "#
+    );
+
+    b.write(lole);
 
     let e = b.into_executable();
 
