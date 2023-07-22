@@ -1,3 +1,4 @@
+#![allow(clippy::missing_safety_doc)]
 #![allow(clippy::uninlined_format_args)]
 
 use std::arch::asm;
@@ -814,10 +815,23 @@ fn jit_compile(table: &Table, argument: Option<String>, _trace: bool) -> bool {
     let blank = Symbol(table.alphabet[0]);
     let tape = Tape::from_argument(argument, blank);
 
+    write_jumptable(&mut b);
+
     let lole = func!(
         r#"
+        push rbp
+        mov rbp, rsp
+        sub rsp, 128
+
+        // Skip 7 bytes of `lea`, 11 bytes of prologue, and get the first entry of jump table
+        lea rax, [rip - 7 - 11 - 2 * 8]
+        mov rax, [rax]
+        call rax
+
         mov rax, 1
         add rax, 2
+        add rsp, 128
+        pop rbp
         ret
         "#
     );
@@ -834,4 +848,42 @@ fn jit_compile(table: &Table, argument: Option<String>, _trace: bool) -> bool {
     println!("Tape: {}", tape);
 
     true
+}
+
+fn write_jumptable(b: &mut MappedBuffer) {
+    let funs = [lole as usize, tape_write as usize];
+
+    let nop = func!("nop")[0];
+    let nops = vec![nop; 16];
+
+    // Skip 7 bytes of `lea` instruction, 16 bytes of `nop`s, and 2 entries of jump table (the 2
+    // needs to be manually updated to reflect `funs` array size), into the first bytes of JIT code.
+    let jump = func!(
+        r#"
+        lea rax, [rip - 7 + 16 + 2 * 8]
+        jmp rax
+        "#
+    );
+
+    assert!(jump.len() <= nops.len(), "Jumptable prologue is larger than 16 bytes");
+
+    let mut code = nops;
+
+    code[0..jump.len()].copy_from_slice(jump);
+
+    b.write(&code);
+
+    for f in funs {
+        b.write(&f.to_le_bytes());
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn lole() {
+    println!("lole called");
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tape_write(sym: u8) {
+    println!("in tape_write, sym={}", sym);
 }
