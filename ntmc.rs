@@ -825,13 +825,21 @@ fn jit_compile(table: &Table, argument: Option<String>, _trace: bool) -> bool {
 
         // Skip 7 bytes of `lea`, 11 bytes of prologue, and get the first entry of jump table
         lea rax, [rip - 7 - 11 - 2 * 8]
-        mov rax, [rax]
+        mov rdi, [rax]
+        mov [rbp - 8], rdi
+        mov rdi, [rax + 8]
+        mov [rbp - 16], rdi
+
+        mov rax, [rbp - 8]
         call rax
 
-        mov rax, 1
-        add rax, 2
-        add rsp, 128
-        pop rbp
+        mov rax, [rbp - 16]
+        mov rdi, 65
+        call rax
+
+        mov rax, 123
+
+        leave
         ret
         "#
     );
