@@ -712,6 +712,12 @@ impl MappedBuffer {
         let slice = unsafe { self.as_slice_mut() };
 
         slice[write].copy_from_slice(data);
+
+        self.write_idx += data.len();
+    }
+
+    unsafe fn as_slice(&self) -> &[u8] {
+        std::slice::from_raw_parts(self.addr.cast(), self.size)
     }
 
     unsafe fn as_slice_mut(&mut self) -> &mut [u8] {
@@ -724,6 +730,27 @@ impl MappedBuffer {
         libc_assert(ret == 0, "Failed to make buffer executable");
 
         ExecBuffer { buf: self }
+    }
+
+    fn hexdump(&self) {
+        let full = unsafe { self.as_slice() };
+        let slice = &full[0..self.write_idx];
+
+        hexdump(slice, 16, true);
+    }
+}
+
+fn hexdump(slice: &[u8], cols: usize, print_offsets: bool) {
+    for (i, line) in slice.chunks(cols).enumerate() {
+        if print_offsets {
+            print!("{:04x}: ", i * cols);
+        }
+
+        for byte in line {
+            print!("{:02x} ", byte);
+        }
+
+        println!();
     }
 }
 
@@ -759,7 +786,7 @@ fn libc_assert(condition: bool, msg: &str) {
 
 #[rustfmt::skip]
 macro_rules! func {
-    ($insn:literal) => {
+    ($insn:literal $(, $( $opts:tt )+ )*) => {
         unsafe {
             let start: u64;
             let end: u64;
@@ -770,7 +797,9 @@ macro_rules! func {
                 $insn,
                 "2:",
                 "lea {}, [rip - 7]",
+
                 out(reg) start,
+                $( $($opts)+ , )*
                 out(reg) end,
             );
 
@@ -794,6 +823,8 @@ fn jit_compile(table: &Table, argument: Option<String>, _trace: bool) -> bool {
     );
 
     b.write(lole);
+
+    b.hexdump();
 
     let e = b.into_executable();
 
