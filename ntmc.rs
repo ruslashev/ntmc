@@ -878,42 +878,10 @@ fn jit_compile(table: &Table, argument: Option<String>, _trace: bool) -> bool {
         SHARED_STATE = ptr::addr_of_mut!(sh_state);
     }
 
-    let prologue = func!(
-        r#"
-        push rbp
-        mov rbp, rsp
-        sub rsp, 64
-
-        // Skip 7 bytes of `lea`, 8 bytes of 3 preceding instructions, and get the first entry of
-        // jump table
-        lea rax, [rip - 7 - 8 - 3 * 8]
-        mov rdi, [rax]
-        mov [rbp - 8], rdi   // 8: tape_write
-
-        mov rdi, [rax + 8]
-        mov [rbp - 16], rdi  // 16: tape_shift
-
-        mov rdi, [rax + 16]
-        mov [rbp - 24], rdi  // 24: get_symbol_offset
-
-        xor rdi, rdi
-        "#
-    );
-
-    let epilogue = func!(
-        r#"
-        leave
-        ret
-        "#
-    );
-
     write_jumptable(&mut b);
-
-    b.write(prologue);
-
+    write_prologue(&mut b);
     write_table(&mut b, &symbols, table, &tape.get_symbol());
-
-    b.write(epilogue);
+    write_epilogue(&mut b);
 
     let accept = b.into_executable().execute() != 0;
 
@@ -952,6 +920,32 @@ fn write_jumptable(b: &mut MappedBuffer) {
     for f in funs {
         b.write(&f.to_le_bytes());
     }
+}
+
+fn write_prologue(b: &mut MappedBuffer) {
+    let prologue = func!(
+        r#"
+        push rbp
+        mov rbp, rsp
+        sub rsp, 64
+
+        // Skip 7 bytes of `lea`, 8 bytes of 3 preceding instructions, and get the first entry of
+        // jump table
+        lea rax, [rip - 7 - 8 - 3 * 8]
+        mov rdi, [rax]
+        mov [rbp - 8], rdi   // 8: tape_write
+
+        mov rdi, [rax + 8]
+        mov [rbp - 16], rdi  // 16: tape_shift
+
+        mov rdi, [rax + 16]
+        mov [rbp - 24], rdi  // 24: get_symbol_offset
+
+        xor rdi, rdi
+        "#
+    );
+
+    b.write(prologue);
 }
 
 #[no_mangle]
@@ -1175,4 +1169,15 @@ fn write_jump_with_offset(c: &mut CodeBuffer, offset: usize) {
     patch_bytes(&mut copy, &needle, &offset.to_le_bytes());
 
     c.write(&copy);
+}
+
+fn write_epilogue(b: &mut MappedBuffer) {
+    let epilogue = func!(
+        r#"
+        leave
+        ret
+        "#
+    );
+
+    b.write(epilogue);
 }
