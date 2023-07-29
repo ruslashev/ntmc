@@ -1,9 +1,11 @@
+#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::uninlined_format_args)]
 
 use std::arch::asm;
 use std::collections::HashMap;
 use std::ffi::{c_int, c_void};
+use std::hash::Hash;
 use std::iter::Peekable;
 use std::process::exit;
 use std::str::Chars;
@@ -309,6 +311,16 @@ impl fmt::Display for StateTransition {
         };
 
         write!(f, "{}", s)
+    }
+}
+
+impl From<u8> for Movement {
+    fn from(v: u8) -> Self {
+        match v {
+            0 => Movement::Left,
+            1 => Movement::Right,
+            x => die!("invalid number representing movement: {:#x}", x),
+        }
     }
 }
 
@@ -733,6 +745,7 @@ impl MappedBuffer {
         ExecBuffer { buf: self }
     }
 
+    #[allow(unused)]
     fn hexdump(&self) {
         let full = unsafe { self.as_slice() };
         let slice = &full[0..self.write_idx];
@@ -809,77 +822,132 @@ macro_rules! func {
     };
 }
 
+struct CodeBuffer {
+    storage: Vec<u8>,
+    write_idx: usize,
+}
+
+impl CodeBuffer {
+    fn new(len: usize) -> Self {
+        let nop = func!("nop")[0];
+        let storage = vec![nop; len];
+
+        CodeBuffer {
+            storage,
+            write_idx: 0,
+        }
+    }
+
+    fn write(&mut self, data: &[u8]) {
+        let range = self.write_idx..self.write_idx + data.len();
+
+        if range.end > self.storage.len() {
+            die!("Code buffer overflow");
+        }
+
+        self.storage[range].copy_from_slice(data);
+        self.write_idx += data.len();
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        self.storage.as_slice()
+    }
+}
+
+struct SharedState {
+    tape: *mut Tape,
+    symbols: *const IdxLut<Symbol>,
+}
+
+static mut SHARED_STATE: *mut SharedState = ptr::null_mut();
+
 fn jit_compile(table: &Table, argument: Option<String>, _trace: bool) -> bool {
-    let mut b = MappedBuffer::new(1);
+    let mut b = MappedBuffer::new(8);
 
     let blank = Symbol(table.alphabet[0]);
-    let tape = Tape::from_argument(argument, blank);
+    let mut tape = Tape::from_argument(argument, blank);
 
-    write_jumptable(&mut b);
+    let symbols = IdxLut::<Symbol>::from_alphabet(&table.alphabet);
 
-    let lole = func!(
+    let mut sh_state = SharedState {
+        tape: ptr::addr_of_mut!(tape),
+        symbols: ptr::addr_of!(symbols),
+    };
+
+    unsafe {
+        SHARED_STATE = ptr::addr_of_mut!(sh_state);
+    }
+
+    let prologue = func!(
         r#"
         push rbp
         mov rbp, rsp
-        sub rsp, 128
+        sub rsp, 64
 
-        // Skip 7 bytes of `lea`, 11 bytes of prologue, and get the first entry of jump table
-        lea rax, [rip - 7 - 11 - 2 * 8]
+        // Skip 7 bytes of `lea`, 8 bytes of 3 preceding instructions, and get the first entry of
+        // jump table
+        lea rax, [rip - 7 - 8 - 3 * 8]
         mov rdi, [rax]
-        mov [rbp - 8], rdi
+        mov [rbp - 8], rdi   // 8: tape_write
+
         mov rdi, [rax + 8]
-        mov [rbp - 16], rdi
+        mov [rbp - 16], rdi  // 16: tape_shift
 
-        mov rax, [rbp - 8]
-        call rax
+        mov rdi, [rax + 16]
+        mov [rbp - 24], rdi  // 24: get_symbol_offset
 
-        mov rax, [rbp - 16]
-        mov rdi, 65
-        call rax
+        xor rdi, rdi
+        "#
+    );
 
-        mov rax, 123
-
+    let epilogue = func!(
+        r#"
         leave
         ret
         "#
     );
 
-    b.write(lole);
+    write_jumptable(&mut b);
 
-    b.hexdump();
+    b.write(prologue);
 
-    let e = b.into_executable();
+    write_table(&mut b, &symbols, table, &tape.get_symbol());
 
-    let ret = e.execute();
-    println!("ret={}", ret);
+    b.write(epilogue);
+
+    let accept = b.into_executable().execute() != 0;
+
+    if accept {
+        println!("Accept");
+    } else {
+        println!("Reject");
+    }
 
     println!("Tape: {}", tape);
 
-    true
+    accept
 }
 
 fn write_jumptable(b: &mut MappedBuffer) {
-    let funs = [lole as usize, tape_write as usize];
+    let funs = [
+        tape_write as usize,
+        tape_shift as usize,
+        get_symbol_offset as usize,
+    ];
 
-    let nop = func!("nop")[0];
-    let nops = vec![nop; 16];
+    let mut cb = CodeBuffer::new(16);
 
-    // Skip 7 bytes of `lea` instruction, 16 bytes of `nop`s, and 2 entries of jump table (the 2
-    // needs to be manually updated to reflect `funs` array size), into the first bytes of JIT code.
     let jump = func!(
         r#"
-        lea rax, [rip - 7 + 16 + 2 * 8]
+        // Move back 7 bytes to start of `lea`, skip 16 bytes of `nop`s and 3 entries of jump table
+        // (the 3 needs to be manually updated to reflect `funs` array), into the first bytes of code.
+        lea rax, [rip - 7 + 16 + 3 * 8]
         jmp rax
         "#
     );
 
-    assert!(jump.len() <= nops.len(), "Jumptable prologue is larger than 16 bytes");
-
-    let mut code = nops;
-
-    code[0..jump.len()].copy_from_slice(jump);
-
-    b.write(&code);
+    cb.write(jump);
+    b.write(cb.as_slice());
 
     for f in funs {
         b.write(&f.to_le_bytes());
@@ -887,11 +955,224 @@ fn write_jumptable(b: &mut MappedBuffer) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn lole() {
-    println!("lole called");
+pub unsafe extern "C" fn tape_write(sym: u8) {
+    let state = SHARED_STATE.as_mut().unwrap();
+    let tape = state.tape.as_mut().unwrap();
+
+    tape.write(Symbol(sym as char));
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn tape_write(sym: u8) {
-    println!("in tape_write, sym={}", sym);
+pub unsafe extern "C" fn tape_shift(movement: u8) {
+    let state = SHARED_STATE.as_mut().unwrap();
+    let tape = state.tape.as_mut().unwrap();
+
+    tape.shift(movement.into());
+}
+
+const CELL_SIZE: usize = 41;
+
+#[no_mangle]
+pub unsafe extern "C" fn get_symbol_offset() -> u64 {
+    let state = SHARED_STATE.as_mut().unwrap();
+    let tape = state.tape.as_mut().unwrap();
+    let sym = tape.get_symbol();
+    let symbols = state.symbols.as_ref().unwrap();
+    let idx = symbols.lookup(&sym);
+    let offset = idx * CELL_SIZE;
+
+    offset as u64
+}
+
+struct IdxLut<T> {
+    indices: HashMap<T, usize>,
+}
+
+impl<T: Eq + Hash> IdxLut<T> {
+    fn from_alphabet(alphabet: &[char]) -> IdxLut<Symbol> {
+        let mut indices = HashMap::new();
+
+        for (i, sym) in alphabet.iter().enumerate() {
+            indices.insert(Symbol(*sym), i);
+        }
+
+        IdxLut { indices }
+    }
+
+    fn from_states(st_actions: &[StateActions]) -> IdxLut<String> {
+        let mut indices = HashMap::new();
+
+        for (i, s) in st_actions.iter().enumerate() {
+            indices.insert(s.state.0.clone(), i);
+        }
+
+        IdxLut { indices }
+    }
+
+    fn lookup(&self, k: &T) -> usize {
+        *self.indices.get(k).unwrap()
+    }
+}
+
+fn write_table(b: &mut MappedBuffer, symbols: &IdxLut<Symbol>, table: &Table, first_arg: &Symbol) {
+    let initial_jump_size = 16;
+
+    let table_start = b.addr as usize + b.write_idx + initial_jump_size;
+    let alphabet_len = table.alphabet.len();
+    let states = IdxLut::<State>::from_states(&table.st_actions);
+
+    let init_st = &table.st_actions[0].state;
+    let init_st_idx = states.lookup(&init_st.0);
+    let first_arg_idx = symbols.lookup(first_arg);
+    let cell_idx = init_st_idx * alphabet_len + first_arg_idx;
+    let jump_addr = table_start + cell_idx * CELL_SIZE;
+
+    let mut init_jump_cb = CodeBuffer::new(initial_jump_size);
+
+    write_jump(&mut init_jump_cb, jump_addr);
+    b.write(init_jump_cb.as_slice());
+
+    for st in &table.st_actions {
+        for action in &st.actions {
+            let mut cb = CodeBuffer::new(CELL_SIZE);
+
+            write_tape_write(&mut cb, action.symbol);
+            write_tape_shift(&mut cb, action.movement);
+
+            match &action.state_tr {
+                StateTransition::Accept => write_halt(&mut cb, true),
+                StateTransition::Reject => write_halt(&mut cb, false),
+                StateTransition::Next(next_st) => {
+                    let st_idx = states.lookup(next_st);
+                    let static_offset = table_start + st_idx * alphabet_len * CELL_SIZE;
+
+                    write_get_symbol_offset(&mut cb);
+                    write_jump_with_offset(&mut cb, static_offset);
+                }
+            }
+
+            b.write(cb.as_slice());
+        }
+    }
+}
+
+fn write_jump(c: &mut CodeBuffer, addr: usize) {
+    let jump = func!(
+        r#"
+        mov rax, 0xdeadbeefcafebabe
+        jmp rax
+        "#
+    );
+    let needle = 0xdead_beef_cafe_babe_u64.to_le_bytes();
+
+    let mut copy = copy_code(jump);
+
+    patch_bytes(&mut copy, &needle, &addr.to_le_bytes());
+
+    c.write(&copy);
+}
+
+fn copy_code(code: &mut [u8]) -> Vec<u8> {
+    let mut copy = vec![0; code.len()];
+    copy.copy_from_slice(code);
+    copy
+}
+
+fn patch_bytes(haystack: &mut [u8], needle: &[u8], patch: &[u8]) {
+    assert!(needle.len() == patch.len());
+
+    let mut idx = None;
+
+    for (i, w) in haystack.windows(needle.len()).enumerate() {
+        if w == needle {
+            idx = Some(i);
+            break;
+        }
+    }
+
+    let idx = idx.unwrap();
+
+    haystack[idx..idx + patch.len()].copy_from_slice(patch);
+}
+
+fn write_tape_write(c: &mut CodeBuffer, sym: Symbol) {
+    let write_call = func!(
+        r#"
+        mov di, 0xfe
+        mov rax, [rbp - 8]
+        call rax
+        "#
+    );
+
+    let mut copy = copy_code(write_call);
+
+    patch_bytes(&mut copy, &[0xfe], &[sym.0 as u8]);
+
+    c.write(&copy);
+}
+
+fn write_tape_shift(c: &mut CodeBuffer, movement: Movement) {
+    let shift_call = func!(
+        r#"
+        mov di, 0xfe
+        mov rax, [rbp - 16]
+        call rax
+        "#
+    );
+
+    let mut copy = copy_code(shift_call);
+
+    patch_bytes(&mut copy, &[0xfe], &[movement as u8]);
+
+    c.write(&copy);
+}
+
+fn write_halt(c: &mut CodeBuffer, accept: bool) {
+    let code_accept = func!(
+        r#"
+        mov rax, 1
+        leave
+        ret
+        "#
+    );
+
+    let code_reject = func!(
+        r#"
+        mov rax, 0
+        leave
+        ret
+        "#
+    );
+
+    let code = if accept { code_accept } else { code_reject };
+
+    c.write(code);
+}
+
+fn write_get_symbol_offset(c: &mut CodeBuffer) {
+    let call = func!(
+        r#"
+        mov rax, [rbp - 24]
+        call rax
+        "#
+    );
+
+    c.write(call);
+}
+
+fn write_jump_with_offset(c: &mut CodeBuffer, offset: usize) {
+    let add_and_jump = func!(
+        r#"
+        mov rsi, 0xdeadbeefcafebabe
+        add rax, rsi
+        jmp rax
+        "#
+    );
+    let needle = 0xdead_beef_cafe_babe_u64.to_le_bytes();
+
+    let mut copy = copy_code(add_and_jump);
+
+    patch_bytes(&mut copy, &needle, &offset.to_le_bytes());
+
+    c.write(&copy);
 }
