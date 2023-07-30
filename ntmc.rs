@@ -5,11 +5,12 @@
 use std::arch::asm;
 use std::collections::HashMap;
 use std::ffi::{c_int, c_void};
+use std::fmt::{self, Display, Formatter};
 use std::hash::Hash;
 use std::iter::Peekable;
 use std::process::exit;
 use std::str::Chars;
-use std::{fmt, iter, ptr, slice};
+use std::{iter, ptr, slice};
 
 fn main() {
     let args = parse_args();
@@ -36,6 +37,10 @@ struct Args {
     trace: bool,
 }
 
+/// Poor man's argument parser, stolen from [Daily Rust: Slice Patterns][SlicePatterns].
+/// Does not support merged short options (`-it` instead of `-i -t`).
+///
+/// [SlicePatterns]: https://adventures.michaelfbryan.com/posts/daily/slice-patterns/#a-poor-mans-argument-parser
 fn parse_args() -> Args {
     let args = std::env::args().collect::<Vec<String>>();
     let args = args.iter().map(String::as_str).collect::<Vec<&str>>();
@@ -127,14 +132,14 @@ macro_rules! die {
     }
 }
 
-trait MaybeError<T, S: AsRef<str>> {
+trait MaybeError<T, S> {
     fn or_exit(self, message: S) -> T;
 }
 
 impl<T, S, E> MaybeError<T, S> for Result<T, E>
 where
-    S: AsRef<str> + fmt::Display,
-    E: fmt::Display,
+    S: AsRef<str> + Display,
+    E: Display,
 {
     fn or_exit(self, message: S) -> T {
         match self {
@@ -257,8 +262,8 @@ enum StateTransition {
     Reject,
 }
 
-impl fmt::Display for Table {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for Table {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         for sym in &self.alphabet {
             write!(f, "{} ", sym)?;
         }
@@ -273,8 +278,8 @@ impl fmt::Display for Table {
     }
 }
 
-impl fmt::Display for StateActions {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for StateActions {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{} ", self.state.0)?;
 
         for a in &self.actions {
@@ -285,14 +290,14 @@ impl fmt::Display for StateActions {
     }
 }
 
-impl fmt::Display for Action {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for Action {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}{}{}", self.symbol.0, self.movement, self.state_tr)
     }
 }
 
-impl fmt::Display for Movement {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for Movement {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let s = match self {
             Movement::Left => "<",
             Movement::Right => ">",
@@ -302,8 +307,8 @@ impl fmt::Display for Movement {
     }
 }
 
-impl fmt::Display for StateTransition {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for StateTransition {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let s = match self {
             StateTransition::Next(st) => st,
             StateTransition::Accept => "A",
@@ -405,7 +410,7 @@ fn next_token<'i>(it: &mut TokIter<'i>) -> &'i Token {
 
 fn parsing_err<S>(msg: S) -> !
 where
-    S: AsRef<str> + fmt::Display,
+    S: AsRef<str> + Display,
 {
     die!("Parsing error: {}", msg);
 }
@@ -594,8 +599,8 @@ impl Tape {
     }
 }
 
-impl fmt::Display for Tape {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for Tape {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut chars = vec![];
 
         for s in self.negative.iter().rev() {
@@ -978,6 +983,9 @@ pub unsafe extern "C" fn get_symbol_offset() -> u64 {
     offset as u64
 }
 
+/// A lookup table that maps strings (states) or letters (symbols) into indices. For example, map
+/// states `in`, `ds`, `di` to 0, 1, 2. These indices are later used to calculate offset into a
+/// 2-dimensional array of actions.
 struct IdxLut<T> {
     indices: HashMap<T, usize>,
 }
@@ -1008,6 +1016,8 @@ impl<T: Eq + Hash> IdxLut<T> {
     }
 }
 
+/// Main part of JIT code generation: convert a 2D table of actions into a 2D table of code. Each
+/// cell in the table has fixed size of [`CELL_SIZE`] bytes, padded with NOPs.
 fn write_table(b: &mut MappedBuffer, symbols: &IdxLut<Symbol>, table: &Table, first_arg: &Symbol) {
     let initial_jump_size = 16;
 
@@ -1015,6 +1025,9 @@ fn write_table(b: &mut MappedBuffer, symbols: &IdxLut<Symbol>, table: &Table, fi
     let alphabet_len = table.alphabet.len();
     let states = IdxLut::<State>::from_states(&table.st_actions);
 
+    // Prior to writing the code table, write a jump to a correct entrypoint: initial state at the
+    // first argument of the tape. Since the table is stored sequentially (2D array stored as 1D
+    // array), index into it as usual: `y * width + x`.
     let init_st = &table.st_actions[0].state;
     let init_st_idx = states.lookup(&init_st.0);
     let first_arg_idx = symbols.lookup(first_arg);
@@ -1037,6 +1050,15 @@ fn write_table(b: &mut MappedBuffer, symbols: &IdxLut<Symbol>, table: &Table, fi
                 StateTransition::Accept => write_halt(&mut cb, true),
                 StateTransition::Reject => write_halt(&mut cb, false),
                 StateTransition::Next(next_st) => {
+                    // Since cells of code correspond to a 2D array, full formula of calculating
+                    // address into an item at given indices is thus the following (identical to the
+                    // initial jump's calculation):
+                    //     table_start + (st_idx * alphabet_len + sym_idx) * cell_size
+                    // Expanded:
+                    //     table_start + st_idx * alphabet_len * cell_size + sym_idx * cell_size
+                    // Here it is evident that every part except `sym_idx` is known prior to running
+                    // the code, i.e. statically. Therefore, compile in this part of equation into
+                    // instructions and add the remaining addend at runtime.
                     let st_idx = states.lookup(next_st);
                     let static_offset = table_start + st_idx * alphabet_len * CELL_SIZE;
 
