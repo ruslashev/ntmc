@@ -18,8 +18,8 @@ fn main() {
     let tokens = lex(&contents);
     let table = parse(&tokens);
 
-    let accept = if args.interactive {
-        interactive_exec(&table, args.argument, args.trace)
+    let accept = if args.interpreter {
+        interpreter_exec(&table, args.argument, args.trace)
     } else {
         jit_compile(&table, args.argument, args.trace)
     };
@@ -33,7 +33,7 @@ struct Args {
     #[allow(unused)]
     output: Option<String>,
     argument: Option<String>,
-    interactive: bool,
+    interpreter: bool,
     trace: bool,
 }
 
@@ -52,7 +52,7 @@ fn parse_args() -> Args {
     let mut output = None;
     let mut input = None;
     let mut argument = None;
-    let mut interactive = false;
+    let mut interpreter = false;
     let mut trace = false;
 
     loop {
@@ -67,8 +67,8 @@ fn parse_args() -> Args {
                 argument = Some((*tape_input).to_string());
                 it = rest;
             }
-            ["-i" | "--interactive", rest @ ..] => {
-                interactive = true;
+            ["-i" | "--interpreter", rest @ ..] => {
+                interpreter = true;
                 it = rest;
             }
             ["-t" | "--trace", rest @ ..] => {
@@ -92,7 +92,7 @@ fn parse_args() -> Args {
         input,
         output,
         argument,
-        interactive,
+        interpreter,
         trace,
     }
 }
@@ -108,7 +108,7 @@ Usage: ntmc [options] <file>
 Options:
     -o, --output <file>   Store output in <file>
     -a, --argument <str>  Initial value of tape
-    -i, --interactive     Interactive/interpreter mode
+    -i, --interpreter     Interpreter mode
     -t, --trace           Trace execution
     -h, --help            Display help
     -v, --version         Display version";
@@ -687,7 +687,7 @@ impl Display for Tape {
     }
 }
 
-fn interactive_exec(table: &Table, argument: Option<String>, trace: bool) -> bool {
+fn interpreter_exec(table: &Table, argument: Option<String>, trace: bool) -> bool {
     let jt = JumpTable::from_table(table);
     let blank = Symbol(table.alphabet[0]);
 
