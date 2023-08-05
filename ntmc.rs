@@ -269,7 +269,7 @@ enum Movement {
 
 #[derive(Clone)]
 enum StateTransition {
-    Next(String),
+    Next(State),
     Accept,
     Reject,
 }
@@ -326,7 +326,7 @@ impl Display for Movement {
 impl Display for StateTransition {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let s = match self {
-            StateTransition::Next(st) => st,
+            StateTransition::Next(st) => st.0.as_str(),
             StateTransition::Accept => "A",
             StateTransition::Reject => "R",
         };
@@ -504,7 +504,7 @@ fn parse_movement(it: &mut TokIter) -> Movement {
 
 fn parse_state_transition(it: &mut TokIter) -> StateTransition {
     match next_token(it) {
-        Token::Identifier(id) => StateTransition::Next(id.clone()),
+        Token::Identifier(id) => StateTransition::Next(State(id.clone())),
         Token::Accept => StateTransition::Accept,
         Token::Reject => StateTransition::Reject,
         t => unexpected_token(t),
@@ -710,7 +710,7 @@ fn interpreter_exec(table: &Table, argument: Option<String>, trace: bool) -> boo
         tape.shift(action.movement);
 
         match &action.state_tr {
-            StateTransition::Next(next_st) => state = State(next_st.clone()),
+            StateTransition::Next(next_st) => state = next_st.clone(),
             StateTransition::Accept => {
                 break true;
             }
@@ -1069,11 +1069,11 @@ impl<T: Eq + Hash> IdxLut<T> {
         IdxLut { indices }
     }
 
-    fn from_states(st_actions: &[StateActions]) -> IdxLut<String> {
+    fn from_states(st_actions: &[StateActions]) -> IdxLut<State> {
         let mut indices = HashMap::new();
 
         for (i, s) in st_actions.iter().enumerate() {
-            indices.insert(s.state.0.clone(), i);
+            indices.insert(s.state.clone(), i);
         }
 
         IdxLut { indices }
@@ -1097,7 +1097,7 @@ fn write_table(b: &mut MappedBuffer, symbols: &IdxLut<Symbol>, table: &Table, fi
     // first argument of the tape. Since the table is stored sequentially (2D array stored as 1D
     // array), index into it as usual: `y * width + x`.
     let init_st = &table.st_actions[0].state;
-    let init_st_idx = states.lookup(&init_st.0);
+    let init_st_idx = states.lookup(init_st);
     let first_arg_idx = symbols.lookup(first_arg);
     let cell_idx = init_st_idx * alphabet_len + first_arg_idx;
     let jump_addr = table_start + cell_idx * CELL_SIZE;
