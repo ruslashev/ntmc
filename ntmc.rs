@@ -152,6 +152,9 @@ where
 #[derive(Debug, PartialEq)]
 enum Token {
     Identifier(String),
+    ParenOpen,
+    ParenClose,
+    Comma,
     MoveRight,
     MoveLeft,
     Accept,
@@ -189,6 +192,9 @@ fn lex(source: &str) -> Vec<Token> {
         }
 
         let token = match c {
+            '(' => Token::ParenOpen,
+            ')' => Token::ParenClose,
+            ',' => Token::Comma,
             '<' => Token::MoveLeft,
             '>' => Token::MoveRight,
             '_' => Token::Identifier(' '.to_string()),
@@ -243,8 +249,14 @@ struct State(String);
 struct Symbol(char);
 
 #[derive(Clone)]
+enum WrittenSymbol {
+    Plain(Symbol),
+    Fork(Symbol, Symbol),
+}
+
+#[derive(Clone)]
 struct Action {
-    symbol: Symbol,
+    symbol: WrittenSymbol,
     movement: Movement,
     state_tr: StateTransition,
 }
@@ -292,7 +304,11 @@ impl Display for StateActions {
 
 impl Display for Action {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{}{}", self.symbol.0, self.movement, self.state_tr)
+        match self.symbol {
+            WrittenSymbol::Plain(s) => write!(f, "{}", s.0)?,
+            WrittenSymbol::Fork(s1, s2) => write!(f, "f({},{})", s1.0, s2.0)?,
+        }
+        write!(f, "{}{}", self.movement, self.state_tr)
     }
 }
 
@@ -440,7 +456,7 @@ fn parse_state(it: &mut TokIter) -> State {
 }
 
 fn parse_action(it: &mut TokIter) -> Action {
-    let symbol = parse_symbol(it);
+    let symbol = parse_written_symbol(it);
     let movement = parse_movement(it);
     let state_tr = parse_state_transition(it);
 
@@ -448,6 +464,33 @@ fn parse_action(it: &mut TokIter) -> Action {
         symbol,
         movement,
         state_tr,
+    }
+}
+
+fn parse_written_symbol(it: &mut TokIter) -> WrittenSymbol {
+    let s = parse_symbol(it);
+
+    if s != Symbol('f') {
+        return WrittenSymbol::Plain(s);
+    }
+
+    if matches!(it.peek(), Some(Token::MoveLeft | Token::MoveRight)) {
+        return WrittenSymbol::Plain(s);
+    }
+
+    expect_token(it, &Token::ParenOpen);
+    let f1 = parse_symbol(it);
+    expect_token(it, &Token::Comma);
+    let f2 = parse_symbol(it);
+    expect_token(it, &Token::ParenClose);
+
+    WrittenSymbol::Fork(f1, f2)
+}
+
+fn expect_token(it: &mut TokIter, expected: &Token) {
+    let next = next_token(it);
+    if next != expected {
+        unexpected_token(next);
     }
 }
 
@@ -597,6 +640,17 @@ impl Tape {
             Movement::Right => self.head += 1,
         }
     }
+
+    fn fork(&mut self, s1: Symbol, s2: Symbol) {
+        let pid = unsafe { fork() };
+
+        libc_assert(pid != -1, "Failed to fork");
+
+        match pid {
+            0 => self.write(s1),
+            _ => self.write(s2),
+        }
+    }
 }
 
 impl Display for Tape {
@@ -648,23 +702,31 @@ fn interactive_exec(table: &Table, argument: Option<String>, trace: bool) -> boo
         let symbol = tape.get_symbol();
         let action = jt.lookup(symbol, &state);
 
-        tape.write(action.symbol);
+        match action.symbol {
+            WrittenSymbol::Plain(sym) => tape.write(sym),
+            WrittenSymbol::Fork(s1, s2) => tape.fork(s1, s2),
+        }
+
         tape.shift(action.movement);
 
         match &action.state_tr {
             StateTransition::Next(next_st) => state = State(next_st.clone()),
             StateTransition::Accept => {
-                println!("Accept");
                 break true;
             }
             StateTransition::Reject => {
-                println!("Reject");
                 break false;
             }
         }
     };
 
-    println!("Tape: {}", tape);
+    let result = if accept {
+        "Accept"
+    } else {
+        "Reject"
+    };
+
+    println!("{}, Tape: {}", result, tape);
 
     accept
 }
@@ -681,6 +743,7 @@ extern "C" {
     fn munmap(addr: *mut c_void, length: usize) -> c_int;
     fn mprotect(addr: *mut c_void, len: usize, prot: c_int) -> c_int;
     fn __errno_location() -> *mut c_int;
+    fn fork() -> c_int;
 }
 
 const PROT_READ: c_int = 1;
@@ -1043,7 +1106,11 @@ fn write_table(b: &mut MappedBuffer, symbols: &IdxLut<Symbol>, table: &Table, fi
         for action in &st.actions {
             let mut cb = CodeBuffer::new(CELL_SIZE);
 
-            write_tape_write(&mut cb, action.symbol);
+            match action.symbol {
+                WrittenSymbol::Plain(sym) => write_tape_write(&mut cb, sym),
+                WrittenSymbol::Fork(_, _) => todo!(),
+            }
+
             write_tape_shift(&mut cb, action.movement);
 
             match &action.state_tr {
