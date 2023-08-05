@@ -720,11 +720,7 @@ fn interactive_exec(table: &Table, argument: Option<String>, trace: bool) -> boo
         }
     };
 
-    let result = if accept {
-        "Accept"
-    } else {
-        "Reject"
-    };
+    let result = if accept { "Accept" } else { "Reject" };
 
     println!("{}, Tape: {}", result, tape);
 
@@ -953,13 +949,9 @@ fn jit_compile(table: &Table, argument: Option<String>, _trace: bool) -> bool {
 
     let accept = b.into_executable().execute() != 0;
 
-    if accept {
-        println!("Accept");
-    } else {
-        println!("Reject");
-    }
+    let result = if accept { "Accept" } else { "Reject" };
 
-    println!("Tape: {}", tape);
+    println!("{}, Tape: {}", result, tape);
 
     accept
 }
@@ -967,6 +959,7 @@ fn jit_compile(table: &Table, argument: Option<String>, _trace: bool) -> bool {
 fn write_jumptable(b: &mut MappedBuffer) {
     let funs = [
         tape_write as usize,
+        tape_fork as usize,
         tape_shift as usize,
         get_symbol_offset as usize,
     ];
@@ -975,9 +968,10 @@ fn write_jumptable(b: &mut MappedBuffer) {
 
     let jump = func!(
         r#"
-        // Move back 7 bytes to start of `lea`, skip 16 bytes of `nop`s and 3 entries of jump table
-        // (the 3 needs to be manually updated to reflect `funs` array), into the first bytes of code.
-        lea rax, [rip - 7 + 16 + 3 * 8]
+        // Move back 7 bytes to the start of `lea`, skip forward 16 bytes of this block's `nop`s and
+        // 4 entries of the jump table (8 bytes each). The 4 needs to be manually updated to reflect
+        // `funs` array size. The resultant address is right at the first byte of prologue's code.
+        lea rax, [rip - 7 + 16 + 4 * 8]
         jmp rax
         "#
     );
@@ -998,16 +992,19 @@ fn write_prologue(b: &mut MappedBuffer) {
         sub rsp, 64
 
         // Skip 7 bytes of `lea`, 8 bytes of 3 preceding instructions, and get the first entry of
-        // jump table
-        lea rax, [rip - 7 - 8 - 3 * 8]
+        // the jump table
+        lea rax, [rip - 7 - 8 - 4 * 8]
         mov rdi, [rax]
         mov [rbp - 8], rdi   // 8: tape_write
 
         mov rdi, [rax + 8]
-        mov [rbp - 16], rdi  // 16: tape_shift
+        mov [rbp - 16], rdi  // 16: tape_fork
 
         mov rdi, [rax + 16]
-        mov [rbp - 24], rdi  // 24: get_symbol_offset
+        mov [rbp - 24], rdi  // 24: tape_shift
+
+        mov rdi, [rax + 24]
+        mov [rbp - 32], rdi  // 32: get_symbol_offset
 
         xor rdi, rdi
         "#
@@ -1025,6 +1022,14 @@ pub unsafe extern "C" fn tape_write(sym: u8) {
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn tape_fork(s1: u8, s2: u8) {
+    let state = SHARED_STATE.as_mut().unwrap();
+    let tape = state.tape.as_mut().unwrap();
+
+    tape.fork(Symbol(s1 as char), Symbol(s2 as char));
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn tape_shift(movement: u8) {
     let state = SHARED_STATE.as_mut().unwrap();
     let tape = state.tape.as_mut().unwrap();
@@ -1032,7 +1037,7 @@ pub unsafe extern "C" fn tape_shift(movement: u8) {
     tape.shift(movement.into());
 }
 
-const CELL_SIZE: usize = 41;
+const CELL_SIZE: usize = 45;
 
 #[no_mangle]
 pub unsafe extern "C" fn get_symbol_offset() -> u64 {
@@ -1088,7 +1093,7 @@ fn write_table(b: &mut MappedBuffer, symbols: &IdxLut<Symbol>, table: &Table, fi
     let alphabet_len = table.alphabet.len();
     let states = IdxLut::<State>::from_states(&table.st_actions);
 
-    // Prior to writing the code table, write a jump to a correct entrypoint: initial state at the
+    // Prior to writing the code table, write a jump to the correct entrypoint: initial state at the
     // first argument of the tape. Since the table is stored sequentially (2D array stored as 1D
     // array), index into it as usual: `y * width + x`.
     let init_st = &table.st_actions[0].state;
@@ -1108,7 +1113,7 @@ fn write_table(b: &mut MappedBuffer, symbols: &IdxLut<Symbol>, table: &Table, fi
 
             match action.symbol {
                 WrittenSymbol::Plain(sym) => write_tape_write(&mut cb, sym),
-                WrittenSymbol::Fork(_, _) => todo!(),
+                WrittenSymbol::Fork(s1, s2) => write_tape_fork(&mut cb, s1, s2),
             }
 
             write_tape_shift(&mut cb, action.movement);
@@ -1194,11 +1199,29 @@ fn write_tape_write(c: &mut CodeBuffer, sym: Symbol) {
     c.write(&copy);
 }
 
+fn write_tape_fork(c: &mut CodeBuffer, s1: Symbol, s2: Symbol) {
+    let fork_call = func!(
+        r#"
+        mov di, 0xfe
+        mov si, 0xef
+        mov rax, [rbp - 16]
+        call rax
+        "#
+    );
+
+    let mut copy = copy_code(fork_call);
+
+    patch_bytes(&mut copy, &[0xfe], &[s1.0 as u8]);
+    patch_bytes(&mut copy, &[0xef], &[s2.0 as u8]);
+
+    c.write(&copy);
+}
+
 fn write_tape_shift(c: &mut CodeBuffer, movement: Movement) {
     let shift_call = func!(
         r#"
         mov di, 0xfe
-        mov rax, [rbp - 16]
+        mov rax, [rbp - 24]
         call rax
         "#
     );
@@ -1235,7 +1258,7 @@ fn write_halt(c: &mut CodeBuffer, accept: bool) {
 fn write_get_symbol_offset(c: &mut CodeBuffer) {
     let call = func!(
         r#"
-        mov rax, [rbp - 24]
+        mov rax, [rbp - 32]
         call rax
         "#
     );
