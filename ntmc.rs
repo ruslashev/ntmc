@@ -233,7 +233,7 @@ fn lex_identifier(mut c: char, it: &mut Peekable<Chars<'_>>) -> Token {
 }
 
 struct Table {
-    alphabet: Vec<char>,
+    alphabet: Vec<Symbol>,
     st_actions: Vec<StateActions>,
 }
 
@@ -277,7 +277,7 @@ enum StateTransition {
 impl Display for Table {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         for sym in &self.alphabet {
-            write!(f, "{} ", sym)?;
+            write!(f, "{} ", sym.0)?;
         }
 
         writeln!(f)?;
@@ -375,7 +375,7 @@ fn skip_newlines(it: &mut TokIter) {
     }
 }
 
-fn parse_alphabet(it: &mut TokIter) -> Vec<char> {
+fn parse_alphabet(it: &mut TokIter) -> Vec<Symbol> {
     let mut alphabet = vec![];
 
     loop {
@@ -385,7 +385,7 @@ fn parse_alphabet(it: &mut TokIter) -> Vec<char> {
             _ => (),
         }
 
-        alphabet.push(parse_symbol(it).0);
+        alphabet.push(parse_symbol(it));
     }
 
     consume_newline(it);
@@ -435,7 +435,7 @@ fn unexpected_token(t: &Token) -> ! {
     parsing_err(format!("unexpected token {:?}", t));
 }
 
-fn parse_line(it: &mut TokIter, alphabet: &[char]) -> StateActions {
+fn parse_line(it: &mut TokIter, alphabet: &[Symbol]) -> StateActions {
     let state = parse_state(it);
     let mut actions = vec![];
 
@@ -530,7 +530,7 @@ impl JumpTable {
             let state = &s.state;
 
             for (i, action) in s.actions.iter().enumerate() {
-                let symbol = Symbol(table.alphabet[i]);
+                let symbol = table.alphabet[i];
 
                 mappings.insert((symbol, state.clone()), action.clone());
             }
@@ -689,7 +689,7 @@ impl Display for Tape {
 
 fn interpreter_exec(table: &Table, argument: Option<String>, trace: bool) -> bool {
     let jt = JumpTable::from_table(table);
-    let blank = Symbol(table.alphabet[0]);
+    let blank = table.alphabet[0];
 
     let mut tape = Tape::from_argument(argument, blank);
     let mut state = table.st_actions[0].state.clone();
@@ -928,7 +928,7 @@ static mut SHARED_STATE: *mut SharedState = ptr::null_mut();
 fn jit_compile(table: &Table, argument: Option<String>, _trace: bool) -> bool {
     let mut b = MappedBuffer::new(8);
 
-    let blank = Symbol(table.alphabet[0]);
+    let blank = table.alphabet[0];
     let mut tape = Tape::from_argument(argument, blank);
 
     let symbols = IdxLut::<Symbol>::from_alphabet(&table.alphabet);
@@ -1059,11 +1059,11 @@ struct IdxLut<T> {
 }
 
 impl<T: Eq + Hash> IdxLut<T> {
-    fn from_alphabet(alphabet: &[char]) -> IdxLut<Symbol> {
+    fn from_alphabet(alphabet: &[Symbol]) -> IdxLut<Symbol> {
         let mut indices = HashMap::new();
 
         for (i, sym) in alphabet.iter().enumerate() {
-            indices.insert(Symbol(*sym), i);
+            indices.insert(*sym, i);
         }
 
         IdxLut { indices }
