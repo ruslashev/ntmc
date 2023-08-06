@@ -413,6 +413,8 @@ fn parse_symbol(it: &mut TokIter) -> Symbol {
             let s = id.chars().next().unwrap();
             Symbol(s)
         }
+        Token::ParenOpen => Symbol('('),
+        Token::ParenClose => Symbol(')'),
         t => unexpected_token(t),
     }
 }
