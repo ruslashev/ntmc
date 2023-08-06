@@ -106,8 +106,8 @@ fn usage(ret: i8) -> ! {
     let text = "\
 Usage: ntmc [options] <file>
 Options:
-    -o, --output <file>   Store output in <file>
     -a, --argument <str>  Initial value of tape
+    -o, --output <file>   Output compiled code to <file>
     -i, --interpreter     Interpreter mode
     -t, --trace           Trace execution
     -h, --help            Display help
@@ -1096,8 +1096,8 @@ fn write_table(b: &mut MappedBuffer, symbols: &IdxLut<Symbol>, table: &Table, fi
     let states = IdxLut::<State>::from_states(&table.st_actions);
 
     // Prior to writing the code table, write a jump to the correct entrypoint: initial state at the
-    // first argument of the tape. Since the table is stored sequentially (2D array stored as 1D
-    // array), index into it as usual: `y * width + x`.
+    // first argument of the tape. Since the table is stored sequentially (2D array stored as 1D),
+    // index into it as usual: `y * width + x`.
     let init_st = &table.st_actions[0].state;
     let init_st_idx = states.lookup(init_st);
     let first_arg_idx = symbols.lookup(first_arg);
@@ -1111,37 +1111,7 @@ fn write_table(b: &mut MappedBuffer, symbols: &IdxLut<Symbol>, table: &Table, fi
 
     for st in &table.st_actions {
         for action in &st.actions {
-            let mut cb = CodeBuffer::new(CELL_SIZE);
-
-            match action.symbol {
-                WrittenSymbol::Plain(sym) => write_tape_write(&mut cb, sym),
-                WrittenSymbol::Fork(s1, s2) => write_tape_fork(&mut cb, s1, s2),
-            }
-
-            write_tape_shift(&mut cb, action.movement);
-
-            match &action.state_tr {
-                StateTransition::Accept => write_halt(&mut cb, true),
-                StateTransition::Reject => write_halt(&mut cb, false),
-                StateTransition::Next(next_st) => {
-                    // Since cells of code correspond to a 2D array, full formula of calculating
-                    // address into an item at given indices is thus the following (identical to the
-                    // initial jump's calculation):
-                    //     table_start + (st_idx * alphabet_len + sym_idx) * cell_size
-                    // Expanded:
-                    //     table_start + st_idx * alphabet_len * cell_size + sym_idx * cell_size
-                    // Here it is evident that every part except `sym_idx` is known prior to running
-                    // the code, i.e. statically. Therefore, compile in this part of equation into
-                    // instructions and add the remaining addend at runtime.
-                    let st_idx = states.lookup(next_st);
-                    let static_offset = table_start + st_idx * alphabet_len * CELL_SIZE;
-
-                    write_get_symbol_offset(&mut cb);
-                    write_jump_with_offset(&mut cb, static_offset);
-                }
-            }
-
-            b.write(cb.as_slice());
+            write_cell(b, action, &states, table_start, alphabet_len);
         }
     }
 }
@@ -1183,6 +1153,46 @@ fn patch_bytes(haystack: &mut [u8], needle: &[u8], patch: &[u8]) {
     let idx = idx.unwrap();
 
     haystack[idx..idx + patch.len()].copy_from_slice(patch);
+}
+
+fn write_cell(
+    b: &mut MappedBuffer,
+    action: &Action,
+    states: &IdxLut<State>,
+    table_start: usize,
+    alphabet_len: usize,
+) {
+    let mut cb = CodeBuffer::new(CELL_SIZE);
+
+    match action.symbol {
+        WrittenSymbol::Plain(sym) => write_tape_write(&mut cb, sym),
+        WrittenSymbol::Fork(s1, s2) => write_tape_fork(&mut cb, s1, s2),
+    }
+
+    write_tape_shift(&mut cb, action.movement);
+
+    match &action.state_tr {
+        StateTransition::Accept => write_halt(&mut cb, true),
+        StateTransition::Reject => write_halt(&mut cb, false),
+        StateTransition::Next(next_st) => {
+            // Since cells of code correspond to a 2D array (Symbols x States, just like a turing
+            // machine table), full formula of calculating address into an item at given Symbol and
+            // State indices is thus the following (identical to the initial jump's calculation):
+            //     table_start + (st_idx * alphabet_len + sym_idx) * cell_size
+            // Expanded:
+            //     table_start + st_idx * alphabet_len * cell_size + sym_idx * cell_size
+            // Here it is evident that every part except `sym_idx` is known prior to running the
+            // code, i.e. statically. Therefore, compile in this part of equation into instructions
+            // and add the remaining addend at runtime.
+            let st_idx = states.lookup(next_st);
+            let static_offset = table_start + st_idx * alphabet_len * CELL_SIZE;
+
+            write_get_symbol_offset(&mut cb);
+            write_jump_with_offset(&mut cb, static_offset);
+        }
+    }
+
+    b.write(cb.as_slice());
 }
 
 fn write_tape_write(c: &mut CodeBuffer, sym: Symbol) {
