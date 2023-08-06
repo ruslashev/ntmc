@@ -923,22 +923,23 @@ impl CodeBuffer {
 struct SharedState {
     tape: *mut Tape,
     symbols: *const IdxLut<Symbol>,
+    cell_size: usize,
 }
 
 static mut SHARED_STATE: *mut SharedState = ptr::null_mut();
 
 fn jit_compile(table: &Table, argument: Option<String>, _trace: bool) -> bool {
-    let mut b = MappedBuffer::new(8);
-
-    let blank = table.alphabet[0];
-    let mut tape = Tape::from_argument(argument, blank);
-
     let symbols = IdxLut::<Symbol>::from_alphabet(&table.alphabet);
+    let blank = table.alphabet[0];
+    let cell_size = if has_forks(table) { 45 } else { 41 };
 
+    let mut tape = Tape::from_argument(argument, blank);
     let mut sh_state = SharedState {
         tape: ptr::addr_of_mut!(tape),
         symbols: ptr::addr_of!(symbols),
+        cell_size,
     };
+    let mut b = MappedBuffer::new(8);
 
     unsafe {
         SHARED_STATE = ptr::addr_of_mut!(sh_state);
@@ -946,7 +947,7 @@ fn jit_compile(table: &Table, argument: Option<String>, _trace: bool) -> bool {
 
     write_jumptable(&mut b);
     write_prologue(&mut b);
-    write_table(&mut b, &symbols, table, &tape.get_symbol());
+    write_table(&mut b, &symbols, table, &tape.get_symbol(), cell_size);
     write_epilogue(&mut b);
 
     let accept = b.into_executable().execute() != 0;
@@ -956,6 +957,18 @@ fn jit_compile(table: &Table, argument: Option<String>, _trace: bool) -> bool {
     println!("{}, Tape: {}", result, tape);
 
     accept
+}
+
+fn has_forks(table: &Table) -> bool {
+    for st in &table.st_actions {
+        for action in &st.actions {
+            if matches!(action.symbol, WrittenSymbol::Fork(_, _)) {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 fn write_jumptable(b: &mut MappedBuffer) {
@@ -1039,8 +1052,6 @@ pub unsafe extern "C" fn tape_shift(movement: u8) {
     tape.shift(movement.into());
 }
 
-const CELL_SIZE: usize = 45;
-
 #[no_mangle]
 pub unsafe extern "C" fn get_symbol_offset() -> u64 {
     let state = SHARED_STATE.as_mut().unwrap();
@@ -1048,7 +1059,7 @@ pub unsafe extern "C" fn get_symbol_offset() -> u64 {
     let sym = tape.get_symbol();
     let symbols = state.symbols.as_ref().unwrap();
     let idx = symbols.lookup(&sym);
-    let offset = idx * CELL_SIZE;
+    let offset = idx * state.cell_size;
 
     offset as u64
 }
@@ -1087,8 +1098,14 @@ impl<T: Eq + Hash> IdxLut<T> {
 }
 
 /// Main part of JIT code generation: convert a 2D table of actions into a 2D table of code. Each
-/// cell in the table has fixed size of [`CELL_SIZE`] bytes, padded with NOPs.
-fn write_table(b: &mut MappedBuffer, symbols: &IdxLut<Symbol>, table: &Table, first_arg: &Symbol) {
+/// cell in the table has fixed size of [`cell_size`] bytes, padded with NOPs.
+fn write_table(
+    b: &mut MappedBuffer,
+    symbols: &IdxLut<Symbol>,
+    table: &Table,
+    first_arg: &Symbol,
+    cell_size: usize,
+) {
     let initial_jump_size = 16;
 
     let table_start = b.addr as usize + b.write_idx + initial_jump_size;
@@ -1102,7 +1119,7 @@ fn write_table(b: &mut MappedBuffer, symbols: &IdxLut<Symbol>, table: &Table, fi
     let init_st_idx = states.lookup(init_st);
     let first_arg_idx = symbols.lookup(first_arg);
     let cell_idx = init_st_idx * alphabet_len + first_arg_idx;
-    let jump_addr = table_start + cell_idx * CELL_SIZE;
+    let jump_addr = table_start + cell_idx * cell_size;
 
     let mut init_jump_cb = CodeBuffer::new(initial_jump_size);
 
@@ -1111,7 +1128,7 @@ fn write_table(b: &mut MappedBuffer, symbols: &IdxLut<Symbol>, table: &Table, fi
 
     for st in &table.st_actions {
         for action in &st.actions {
-            write_cell(b, action, &states, table_start, alphabet_len);
+            write_cell(b, action, &states, table_start, alphabet_len, cell_size);
         }
     }
 }
@@ -1161,8 +1178,9 @@ fn write_cell(
     states: &IdxLut<State>,
     table_start: usize,
     alphabet_len: usize,
+    cell_size: usize,
 ) {
-    let mut cb = CodeBuffer::new(CELL_SIZE);
+    let mut cb = CodeBuffer::new(cell_size);
 
     match action.symbol {
         WrittenSymbol::Plain(sym) => write_tape_write(&mut cb, sym),
@@ -1185,7 +1203,7 @@ fn write_cell(
             // code, i.e. statically. Therefore, compile in this part of equation into instructions
             // and add the remaining addend at runtime.
             let st_idx = states.lookup(next_st);
-            let static_offset = table_start + st_idx * alphabet_len * CELL_SIZE;
+            let static_offset = table_start + st_idx * alphabet_len * cell_size;
 
             write_get_symbol_offset(&mut cb);
             write_jump_with_offset(&mut cb, static_offset);
