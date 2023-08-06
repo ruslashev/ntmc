@@ -1,3 +1,7 @@
+# A palindrome detector
+# Example: 1011101
+# Another: 1011001
+
     x    0    1
 in x>A  x>f0 x>f1
 f0 x<m0 0>f0 1>f0

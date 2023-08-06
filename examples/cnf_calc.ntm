@@ -1,5 +1,6 @@
 # A calculator of expressions in conjunctive normal form
 # Example: . (~0 | 1) & (0 | 1 | ~0 | 0) & (~1 | 1) .
+# (dots are mandatory)
 
     _    (    )    0    1    ~    |    &    .
 in _>in _>ds _>R  _>R  _>R  _>R  _>R  _>R  .>in
