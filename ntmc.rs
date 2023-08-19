@@ -1128,7 +1128,38 @@ fn write_table(
 
     for st in &table.st_actions {
         for action in &st.actions {
-            write_cell(b, action, &states, table_start, alphabet_len, cell_size);
+            let mut cb = CodeBuffer::new(cell_size);
+
+            match action.symbol {
+                WrittenSymbol::Plain(sym) => write_tape_write(&mut cb, sym),
+                WrittenSymbol::Fork(s1, s2) => write_tape_fork(&mut cb, s1, s2),
+            }
+
+            write_tape_shift(&mut cb, action.movement);
+
+            match &action.state_tr {
+                StateTransition::Accept => write_halt(&mut cb, true),
+                StateTransition::Reject => write_halt(&mut cb, false),
+                StateTransition::Next(next_st) => {
+                    // Since cells of code correspond to a 2D array (Symbols x States, just like a
+                    // turing machine table), full formula of calculating address into an item at
+                    // given Symbol and State indices is thus the following:
+                    //     table_start + (st_idx * alphabet_len + sym_idx) * cell_size
+                    // Expanded:
+                    //     table_start + st_idx * alphabet_len * cell_size + sym_idx * cell_size
+                    // (identical to the initial jump's calculation)
+                    // Here it is evident that every part except `sym_idx` is known prior to running
+                    // the code, i.e. statically. Therefore, compile in this part of equation into
+                    // instructions and add the remaining addend at runtime.
+                    let st_idx = states.lookup(next_st);
+                    let static_offset = table_start + st_idx * alphabet_len * cell_size;
+
+                    write_get_symbol_offset(&mut cb);
+                    write_jump_with_offset(&mut cb, static_offset);
+                }
+            }
+
+            b.write(cb.as_slice());
         }
     }
 }
@@ -1170,47 +1201,6 @@ fn patch_bytes(haystack: &mut [u8], needle: &[u8], patch: &[u8]) {
     let idx = idx.unwrap();
 
     haystack[idx..idx + patch.len()].copy_from_slice(patch);
-}
-
-fn write_cell(
-    b: &mut MappedBuffer,
-    action: &Action,
-    states: &IdxLut<State>,
-    table_start: usize,
-    alphabet_len: usize,
-    cell_size: usize,
-) {
-    let mut cb = CodeBuffer::new(cell_size);
-
-    match action.symbol {
-        WrittenSymbol::Plain(sym) => write_tape_write(&mut cb, sym),
-        WrittenSymbol::Fork(s1, s2) => write_tape_fork(&mut cb, s1, s2),
-    }
-
-    write_tape_shift(&mut cb, action.movement);
-
-    match &action.state_tr {
-        StateTransition::Accept => write_halt(&mut cb, true),
-        StateTransition::Reject => write_halt(&mut cb, false),
-        StateTransition::Next(next_st) => {
-            // Since cells of code correspond to a 2D array (Symbols x States, just like a turing
-            // machine table), full formula of calculating address into an item at given Symbol and
-            // State indices is thus the following (identical to the initial jump's calculation):
-            //     table_start + (st_idx * alphabet_len + sym_idx) * cell_size
-            // Expanded:
-            //     table_start + st_idx * alphabet_len * cell_size + sym_idx * cell_size
-            // Here it is evident that every part except `sym_idx` is known prior to running the
-            // code, i.e. statically. Therefore, compile in this part of equation into instructions
-            // and add the remaining addend at runtime.
-            let st_idx = states.lookup(next_st);
-            let static_offset = table_start + st_idx * alphabet_len * cell_size;
-
-            write_get_symbol_offset(&mut cb);
-            write_jump_with_offset(&mut cb, static_offset);
-        }
-    }
-
-    b.write(cb.as_slice());
 }
 
 fn write_tape_write(c: &mut CodeBuffer, sym: Symbol) {
