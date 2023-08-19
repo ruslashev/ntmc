@@ -1,5 +1,3 @@
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::missing_safety_doc)]
 #![allow(clippy::uninlined_format_args)]
 
 use std::arch::asm;
@@ -1040,32 +1038,28 @@ fn write_prologue(b: &mut MappedBuffer) {
     b.write(prologue);
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn tape_write(sym: u8) {
+unsafe fn tape_write(sym: u8) {
     let state = SHARED_STATE.as_mut().unwrap();
     let tape = state.tape.as_mut().unwrap();
 
     tape.write(Symbol(sym as char));
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn tape_fork(s1: u8, s2: u8) {
+unsafe fn tape_fork(s1: u8, s2: u8) {
     let state = SHARED_STATE.as_mut().unwrap();
     let tape = state.tape.as_mut().unwrap();
 
     tape.fork(Symbol(s1 as char), Symbol(s2 as char));
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn tape_shift(movement: u8) {
+unsafe fn tape_shift(movement: u8) {
     let state = SHARED_STATE.as_mut().unwrap();
     let tape = state.tape.as_mut().unwrap();
 
     tape.shift(movement.into());
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn get_symbol_offset() -> u64 {
+unsafe fn get_symbol_offset() -> u64 {
     let state = SHARED_STATE.as_mut().unwrap();
     let tape = state.tape.as_mut().unwrap();
     let sym = tape.get_symbol();
@@ -1076,8 +1070,7 @@ pub unsafe extern "C" fn get_symbol_offset() -> u64 {
     offset as u64
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn trace_exec(state_idx: usize) {
+unsafe fn trace_exec(state_idx: usize) {
     let sh_state = SHARED_STATE.as_mut().unwrap();
     let tape = sh_state.tape.as_mut().unwrap();
     let st_action = sh_state.st_actions.add(state_idx).as_ref().unwrap();
