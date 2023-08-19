@@ -28,8 +28,6 @@ fn main() {
 #[derive(Debug)]
 struct Args {
     input: String,
-    #[allow(unused)]
-    output: Option<String>,
     argument: Option<String>,
     interpreter: bool,
     trace: bool,
@@ -47,7 +45,6 @@ fn parse_args() -> Args {
     };
 
     let mut it = tail;
-    let mut output = None;
     let mut input = None;
     let mut argument = None;
     let mut interpreter = false;
@@ -57,10 +54,6 @@ fn parse_args() -> Args {
         match it {
             ["-h" | "--help", ..] => usage(0),
             ["-v" | "--version", ..] => version(),
-            ["-o" | "--output", filename, rest @ ..] => {
-                output = Some((*filename).to_string());
-                it = rest;
-            }
             ["-a" | "--argument", tape_input, rest @ ..] => {
                 argument = Some((*tape_input).to_string());
                 it = rest;
@@ -88,7 +81,6 @@ fn parse_args() -> Args {
 
     Args {
         input,
-        output,
         argument,
         interpreter,
         trace,
@@ -105,7 +97,6 @@ fn usage(ret: i8) -> ! {
 Usage: ntmc [options] <file>
 Options:
     -a, --argument <str>  Initial value of tape
-    -o, --output <file>   Output compiled code to <file>
     -i, --interpreter     Interpreter mode
     -t, --trace           Trace execution
     -h, --help            Display help
