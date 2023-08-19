@@ -266,7 +266,7 @@ enum StateTransition {
 impl Display for Table {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         for sym in &self.alphabet {
-            write!(f, "{} ", sym.0)?;
+            write!(f, "{} ", sym)?;
         }
 
         writeln!(f)?;
@@ -281,7 +281,7 @@ impl Display for Table {
 
 impl Display for StateActions {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} ", self.state.0)?;
+        write!(f, "{} ", self.state)?;
 
         for a in &self.actions {
             write!(f, "{} ", a)?;
@@ -291,11 +291,23 @@ impl Display for StateActions {
     }
 }
 
+impl Display for State {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Display for Symbol {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 impl Display for Action {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self.symbol {
-            WrittenSymbol::Plain(s) => write!(f, "{}", s.0)?,
-            WrittenSymbol::Fork(s1, s2) => write!(f, "f({},{})", s1.0, s2.0)?,
+            WrittenSymbol::Plain(s) => write!(f, "{}", s)?,
+            WrittenSymbol::Fork(s1, s2) => write!(f, "f({},{})", s1, s2)?,
         }
         write!(f, "{}{}", self.movement, self.state_tr)
     }
@@ -534,8 +546,8 @@ impl JumpTable {
         self.mappings.get(&(sym, state.clone())).unwrap_or_else(|| {
             die!(
                 "Error: no actions matched symbol '{}' at state '{}'",
-                sym.0,
-                state.0
+                sym,
+                state
             );
         })
     }
@@ -687,7 +699,7 @@ fn interpreter_exec(table: &Table, argument: Option<String>, trace: bool) -> boo
 
     let accept = loop {
         if trace {
-            println!("tape={}, state={}", tape, state.0);
+            println!("tape={}, state={}", tape, state);
         }
 
         let symbol = tape.get_symbol();
@@ -1067,7 +1079,7 @@ unsafe fn trace_exec(state_idx: usize) {
     let st_action = sh_state.st_actions.add(state_idx).as_ref().unwrap();
     let curr_state = &st_action.state;
 
-    println!("tape={}, state={}", tape, curr_state.0);
+    println!("tape={}, state={}", tape, curr_state);
 }
 
 /// A lookup table that maps strings (states) or letters (symbols) into indices. For example, map
@@ -1077,7 +1089,7 @@ struct IdxLut<T> {
     indices: HashMap<T, usize>,
 }
 
-impl<T: Eq + Hash> IdxLut<T> {
+impl<T: Eq + Hash + Display> IdxLut<T> {
     fn from_alphabet(alphabet: &[Symbol]) -> IdxLut<Symbol> {
         let mut indices = HashMap::new();
 
@@ -1099,7 +1111,9 @@ impl<T: Eq + Hash> IdxLut<T> {
     }
 
     fn lookup(&self, k: &T) -> usize {
-        *self.indices.get(k).unwrap()
+        *self.indices.get(k).unwrap_or_else(|| {
+            die!("Error: no item '{}' found", k);
+        })
     }
 }
 
