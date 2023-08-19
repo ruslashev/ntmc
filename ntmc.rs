@@ -923,23 +923,32 @@ impl CodeBuffer {
 struct SharedState {
     tape: *mut Tape,
     symbols: *const IdxLut<Symbol>,
+    st_actions: *const StateActions,
     cell_size: usize,
 }
 
 static mut SHARED_STATE: *mut SharedState = ptr::null_mut();
 
-fn jit_compile(table: &Table, argument: Option<String>, _trace: bool) -> bool {
+fn jit_compile(table: &Table, argument: Option<String>, trace: bool) -> bool {
     let symbols = IdxLut::<Symbol>::from_alphabet(&table.alphabet);
     let blank = table.alphabet[0];
-    let cell_size = if has_forks(table) { 45 } else { 41 };
+    let cell_size = match (trace, has_forks(table)) {
+        (false, false) => 41,
+        (false, true) => 45,
+        (true, false) => 57,
+        (true, true) => 61,
+    };
 
     let mut tape = Tape::from_argument(argument, blank);
     let mut sh_state = SharedState {
         tape: ptr::addr_of_mut!(tape),
         symbols: ptr::addr_of!(symbols),
+        st_actions: table.st_actions.as_ptr(),
         cell_size,
     };
-    let mut b = MappedBuffer::new(8);
+    let mut b = MappedBuffer::new(32);
+
+    let first_arg = &tape.get_symbol();
 
     unsafe {
         SHARED_STATE = ptr::addr_of_mut!(sh_state);
@@ -947,11 +956,10 @@ fn jit_compile(table: &Table, argument: Option<String>, _trace: bool) -> bool {
 
     write_jumptable(&mut b);
     write_prologue(&mut b);
-    write_table(&mut b, &symbols, table, &tape.get_symbol(), cell_size);
+    write_table(&mut b, &symbols, table, first_arg, trace, cell_size);
     write_epilogue(&mut b);
 
     let accept = b.into_executable().execute() != 0;
-
     let result = if accept { "Accept" } else { "Reject" };
 
     println!("{}, Tape: {}", result, tape);
@@ -977,6 +985,7 @@ fn write_jumptable(b: &mut MappedBuffer) {
         tape_fork as usize,
         tape_shift as usize,
         get_symbol_offset as usize,
+        trace_exec as usize,
     ];
 
     let mut cb = CodeBuffer::new(16);
@@ -984,9 +993,9 @@ fn write_jumptable(b: &mut MappedBuffer) {
     let jump = func!(
         r#"
         // Move back 7 bytes to the start of `lea`, skip forward 16 bytes of this block's `nop`s and
-        // 4 entries of the jump table (8 bytes each). The 4 needs to be manually updated to reflect
+        // 5 entries of the jump table (8 bytes each). The 5 needs to be manually updated to reflect
         // `funs` array size. The resultant address is right at the first byte of prologue's code.
-        lea rax, [rip - 7 + 16 + 4 * 8]
+        lea rax, [rip - 7 + 16 + 5 * 8]
         jmp rax
         "#
     );
@@ -1008,7 +1017,7 @@ fn write_prologue(b: &mut MappedBuffer) {
 
         // Skip 7 bytes of `lea`, 8 bytes of 3 preceding instructions, and get the first entry of
         // the jump table
-        lea rax, [rip - 7 - 8 - 4 * 8]
+        lea rax, [rip - 7 - 8 - 5 * 8]
         mov rdi, [rax]
         mov [rbp - 8], rdi   // 8: tape_write
 
@@ -1020,6 +1029,9 @@ fn write_prologue(b: &mut MappedBuffer) {
 
         mov rdi, [rax + 24]
         mov [rbp - 32], rdi  // 32: get_symbol_offset
+
+        mov rdi, [rax + 32]
+        mov [rbp - 40], rdi  // 40: trace_exec
 
         xor rdi, rdi
         "#
@@ -1064,6 +1076,16 @@ pub unsafe extern "C" fn get_symbol_offset() -> u64 {
     offset as u64
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn trace_exec(state_idx: usize) {
+    let sh_state = SHARED_STATE.as_mut().unwrap();
+    let tape = sh_state.tape.as_mut().unwrap();
+    let st_action = sh_state.st_actions.add(state_idx).as_ref().unwrap();
+    let curr_state = &st_action.state;
+
+    println!("tape={}, state={}", tape, curr_state.0);
+}
+
 /// A lookup table that maps strings (states) or letters (symbols) into indices. For example, map
 /// states `in`, `ds`, `di` to 0, 1, 2. These indices are later used to calculate offset into a
 /// 2-dimensional array of actions.
@@ -1104,6 +1126,7 @@ fn write_table(
     symbols: &IdxLut<Symbol>,
     table: &Table,
     first_arg: &Symbol,
+    trace: bool,
     cell_size: usize,
 ) {
     let initial_jump_size = 16;
@@ -1129,6 +1152,10 @@ fn write_table(
     for st in &table.st_actions {
         for action in &st.actions {
             let mut cb = CodeBuffer::new(cell_size);
+
+            if trace {
+                write_trace(&mut cb, states.lookup(&st.state));
+            }
 
             match action.symbol {
                 WrittenSymbol::Plain(sym) => write_tape_write(&mut cb, sym),
@@ -1201,6 +1228,23 @@ fn patch_bytes(haystack: &mut [u8], needle: &[u8], patch: &[u8]) {
     let idx = idx.unwrap();
 
     haystack[idx..idx + patch.len()].copy_from_slice(patch);
+}
+
+fn write_trace(c: &mut CodeBuffer, state_idx: usize) {
+    let trace_call = func!(
+        r#"
+        mov rdi, 0xdeadbeefcafebabe
+        mov rax, [rbp - 40]
+        call rax
+        "#
+    );
+    let needle = 0xdead_beef_cafe_babe_u64.to_le_bytes();
+
+    let mut copy = copy_code(trace_call);
+
+    patch_bytes(&mut copy, &needle, &state_idx.to_le_bytes());
+
+    c.write(&copy);
 }
 
 fn write_tape_write(c: &mut CodeBuffer, sym: Symbol) {
