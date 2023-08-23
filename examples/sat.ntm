@@ -1,0 +1,67 @@
+# Solver for subset of a boolean satisfiability problem
+# Supports up to 5 variables from `a` to `e`, because it's pretty hard to write
+# a program for a turing machine. Would be easier with a two-tape turing machine.
+# Example: . (a | b) & (~a | b) .
+# Another: . (a | ~b | c) & (~d | e | ~a) & (b | ~c | d) .
+
+       _      (     )     0     1     a     b     c     d     e     ~     |     &     .
+en    _>en   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   .>in
+in    _>in   (>in  )>in  0>in  1>in  a>da  b>db  c>dc  d>dd  e>de  ~>in  |>in  &>in  .<nl
+nl    _<nl   (<nl  )<nl  0<nl  1<nl  a<nl  b<nl  c<nl  d<nl  e<nl  ~<nl  |<nl  &<nl  .>sv
+
+da    _>da   (>da  )>da  0>da  1>da  a>da  b>da  c>da  d>da  e>da  ~>da  |>da  &>da  .>fa
+fa f(0,1)>wa _>R   _>R   0>fa  1>fa  _>R   b>fa  c>fa  d>fa  e>fa  _>R   _>R   _>R   _>R
+wa    a<wa   _>R   _>R   0<da0 1<da1 _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R
+da0   _<da0  _>R   _>R   0<da0 1<da0 _>R   b<da0 c<da0 d<da0 e<da0 _>R   _>R   _>R   .<va0
+da1   _<da1  _>R   _>R   0<da1 1<da1 _>R   b<da1 c<da0 d<da0 e<da0 _>R   _>R   _>R   .<va1
+va0   _<va0  (<va0 )<va0 0<va0 1<va0 0<va0 b<va0 c<va0 d<va0 e<va0 ~<va0 |<va0 &<va0 .>in
+va1   _<va1  (<va1 )<va1 0<va1 1<va1 1<va1 b<va1 c<va1 d<va1 e<va1 ~<va1 |<va1 &<va1 .>in
+
+db    _>db   (>db  )>db  0>db  1>db  a>db  b>db  c>db  d>db  e>db  ~>db  |>db  &>db  .>fb
+fb f(0,1)>wb _>R   _>R   0>fb  1>fb  a>fb  _>R   c>fb  d>fb  e>fb  _>R   _>R   _>R   _>R
+wb    b<wb   _>R   _>R   0<db0 1<db1 _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R
+db0   _<db0  _>R   _>R   0<db0 1<db0 a<db0 _>R   c<db0 d<db0 e<db0 _>R   _>R   _>R   .<vb0
+db1   _<db1  _>R   _>R   0<db1 1<db1 a<db1 _>R   c<db0 d<db0 e<db0 _>R   _>R   _>R   .<vb1
+vb0   _<vb0  (<vb0 )<vb0 0<vb0 1<vb0 a<vb0 0<vb0 c<vb0 d<vb0 e<vb0 ~<vb0 |<vb0 &<vb0 .>in
+vb1   _<vb1  (<vb1 )<vb1 0<vb1 1<vb1 a<vb1 1<vb1 c<vb1 d<vb1 e<vb1 ~<vb1 |<vb1 &<vb1 .>in
+
+dc    _>dc   (>dc  )>dc  0>dc  1>dc  a>dc  b>dc  c>dc  d>dc  e>dc  ~>dc  |>dc  &>dc  .>fc
+fc f(0,1)>wc _>R   _>R   0>fc  1>fc  a>fc  b>fc  _>R   d>fc  e>fc  _>R   _>R   _>R   _>R
+wc    c<wc   _>R   _>R   0<dc0 1<dc1 _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R
+dc0   _<dc0  _>R   _>R   0<dc0 1<dc0 a<dc0 b<dc0 _>R   d<dc0 e<dc0 _>R   _>R   _>R   .<vc0
+dc1   _<dc1  _>R   _>R   0<dc1 1<dc1 a<dc1 b<dc0 _>R   d<dc0 e<dc0 _>R   _>R   _>R   .<vc1
+vc0   _<vc0  (<vc0 )<vc0 0<vc0 1<vc0 a<vc0 b<vc0 0<vc0 d<vc0 e<vc0 ~<vc0 |<vc0 &<vc0 .>in
+vc1   _<vc1  (<vc1 )<vc1 0<vc1 1<vc1 a<vc1 b<vc1 1<vc1 d<vc1 e<vc1 ~<vc1 |<vc1 &<vc1 .>in
+
+dd    _>dd   (>dd  )>dd  0>dd  1>dd  a>dd  b>dd  c>dd  d>dd  e>dd  ~>dd  |>dd  &>dd  .>fd
+fd f(0,1)>wd _>R   _>R   0>fd  1>fd  a>fd  b>fd  c>fd  _>R   e>fd  _>R   _>R   _>R   _>R
+wd    d<wd   _>R   _>R   0<dd0 1<dd1 _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R
+dd0   _<dd0  _>R   _>R   0<dd0 1<dd0 a<dd0 b<dd0 c<dd0 _>R   e<dd0 _>R   _>R   _>R   .<vd0
+dd1   _<dd1  _>R   _>R   0<dd1 1<dd1 a<dd1 b<dd0 c<dd0 _>R   e<dd0 _>R   _>R   _>R   .<vd1
+vd0   _<vd0  (<vd0 )<vd0 0<vd0 1<vd0 a<vd0 b<vd0 c<vd0 0<vd0 e<vd0 ~<vd0 |<vd0 &<vd0 .>in
+vd1   _<vd1  (<vd1 )<vd1 0<vd1 1<vd1 a<vd1 b<vd1 c<vd1 1<vd1 e<vd1 ~<vd1 |<vd1 &<vd1 .>in
+
+de    _>de   (>de  )>de  0>de  1>de  a>de  b>de  c>de  d>de  e>de  ~>de  |>de  &>de  .>fe
+fe f(0,1)>we _>R   _>R   0>fe  1>fe  a>fe  b>fe  c>fe  d>fe  _>R   _>R   _>R   _>R   _>R
+we    e<we   _>R   _>R   0<de0 1<de1 _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R
+de0   _<de0  _>R   _>R   0<de0 1<de0 a<de0 b<de0 c<de0 d<de0 _>R   _>R   _>R   _>R   .<ve0
+de1   _<de1  _>R   _>R   0<de1 1<de1 a<de1 b<de0 c<de0 d<de0 _>R   _>R   _>R   _>R   .<ve1
+ve0   _<ve0  (<ve0 )<ve0 0<ve0 1<ve0 a<ve0 b<ve0 c<ve0 d<ve0 0<ve0 ~<ve0 |<ve0 &<ve0 .>in
+ve1   _<ve1  (<ve1 )<ve1 0<ve1 1<ve1 a<ve1 b<ve1 c<ve1 d<ve1 1<ve1 ~<ve1 |<ve1 &<ve1 .>in
+
+sv    _>sv   _>ds  _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   .>sv
+ds    _>ds   _>R   _>R   _>d0  _>d1  _>R   _>R   _>R   _>R   _>R   _>di  _>R   _>R   _>R
+di    _>di   _>R   _>R   _>d1  _>d0  _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R
+d0    _>d0   _>R   0>n2  _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>m0  _>R   _>R
+d1    _>d1   _>R   1>n2  _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>m1  _>R   _>R
+m0    _>m0   _>R   _>R   _>d0  _>d1  _>R   _>R   _>R   _>R   _>R   _>i0  _>R   _>R   _>R
+m1    _>m1   _>R   _>R   _>d1  _>d1  _>R   _>R   _>R   _>R   _>R   _>i1  _>R   _>R   _>R
+i0    _>i0   _>R   _>R   _>d1  _>d0  _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R
+i1    _>i0   _>R   _>R   _>d1  _>d1  _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R
+n2    _>n2   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   &>n1  _<bt
+n1    _>n1   _>ds  _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R
+bt    _<bt   _>R   _>R   _<b0  _<b1  _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R
+b0    _<b0   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _<c0  0>R
+b1    _<b1   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _<c1  1>A
+c0    _<c0   _>R   _>R   _<b0  _<b0  _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R
+c1    _<c1   _>R   _>R   _<b0  _<b1  _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R   _>R
