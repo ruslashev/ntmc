@@ -453,7 +453,7 @@ fn parse_line(it: &mut TokIter, alphabet: &[Symbol]) -> StateActions {
 
 fn parse_state(it: &mut TokIter) -> State {
     match next_token(it) {
-        Token::Identifier(id) => State(id.clone()),
+        Token::Identifier(id) => State(id.to_string()),
         t => unexpected_token(t),
     }
 }
@@ -507,7 +507,7 @@ fn parse_movement(it: &mut TokIter) -> Movement {
 
 fn parse_state_transition(it: &mut TokIter) -> StateTransition {
     match next_token(it) {
-        Token::Identifier(id) => StateTransition::Next(State(id.clone())),
+        Token::Identifier(id) => StateTransition::Next(State(id.to_string())),
         Token::Accept => StateTransition::Accept,
         Token::Reject => StateTransition::Reject,
         t => unexpected_token(t),
@@ -695,7 +695,7 @@ fn interpreter_exec(table: &Table, argument: Option<String>, trace: bool) -> boo
     let blank = table.alphabet[0];
 
     let mut tape = Tape::from_argument(argument, blank);
-    let mut state = table.st_actions[0].state.clone();
+    let mut state = &table.st_actions[0].state;
 
     let accept = loop {
         if trace {
@@ -703,7 +703,7 @@ fn interpreter_exec(table: &Table, argument: Option<String>, trace: bool) -> boo
         }
 
         let symbol = tape.get_symbol();
-        let action = jt.lookup(symbol, &state);
+        let action = jt.lookup(symbol, state);
 
         match action.symbol {
             WrittenSymbol::Plain(sym) => tape.write(sym),
@@ -713,7 +713,7 @@ fn interpreter_exec(table: &Table, argument: Option<String>, trace: bool) -> boo
         tape.shift(action.movement);
 
         match &action.state_tr {
-            StateTransition::Next(next_st) => state = next_st.clone(),
+            StateTransition::Next(next_st) => state = next_st,
             StateTransition::Accept => {
                 break true;
             }
